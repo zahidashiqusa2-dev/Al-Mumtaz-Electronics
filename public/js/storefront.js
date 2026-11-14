@@ -205,7 +205,168 @@
         renderCatalog();
     }
 
-    function renderCategories() {
+    function promoteStoreSection(mode = 'default') {
+        const stack = document.getElementById('store-sections-stack');
+        const cats = document.getElementById('categories-section');
+        const flash = document.getElementById('flash-deals-section');
+        const catalog = document.getElementById('catalog-section');
+        if (!stack || !cats || !flash || !catalog) return;
+
+        if (mode === 'catalog') {
+            stack.appendChild(catalog);
+            stack.appendChild(cats);
+            stack.appendChild(flash);
+            catalog.classList.remove('py-6');
+            catalog.classList.add('pt-6', 'pb-10');
+        } else if (mode === 'categories') {
+            stack.appendChild(cats);
+            stack.appendChild(flash);
+            stack.appendChild(catalog);
+            catalog.classList.remove('pt-6', 'pb-10');
+            catalog.classList.add('py-6');
+        } else {
+            stack.appendChild(cats);
+            stack.appendChild(flash);
+            stack.appendChild(catalog);
+            catalog.classList.remove('pt-6', 'pb-10');
+            catalog.classList.add('py-6');
+        }
+
+        if (window.scrollY > 120) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }
+
+    function hasActiveSpotlightCollection() {
+        return Boolean(
+            state.wishlistOnly ||
+            (state.filters.category && state.filters.category !== 'all') ||
+            state.filters.minDiscount ||
+            state.filters.tag ||
+            state.filters.search
+        );
+    }
+
+    function renderCatalogQuickCategoryBar() {
+        const bar = document.getElementById('catalog-quick-categories');
+        if (!bar) return;
+
+        const quickItems = [
+            { slug: 'sale', label: 'Sale Offers', isSale: true },
+            { slug: 'featured', label: 'Featured Items', isFeatured: true },
+            ...state.categories.map((c) => ({ slug: c.slug, label: c.name }))
+        ];
+
+        bar.innerHTML = quickItems.map((item) => {
+            const active =
+                (item.isSale && state.filters.minDiscount === '1' && state.filters.category === 'all' && !state.filters.tag) ||
+                (item.isFeatured && state.filters.tag === 'Featured' && state.filters.category === 'all') ||
+                (!item.isSale && !item.isFeatured && state.filters.category === item.slug);
+            return `
+                <button
+                    type="button"
+                    data-banner-cat="${escapeHtml(item.slug)}"
+                    class="banner-cat-btn h-8 px-3 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 border transition-colors ${
+                        active
+                            ? 'bg-[#FEF08A] text-slate-950 border-[#FEF08A]'
+                            : 'bg-white/10 text-slate-200 border-white/15 hover:bg-white/20 hover:text-white'
+                    }"
+                >
+                    ${escapeHtml(item.label)}
+                </button>
+            `;
+        }).join('');
+
+        bar.querySelectorAll('.banner-cat-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const key = btn.dataset.bannerCat;
+                if (key === 'sale') {
+                    applyQuickTab('sale');
+                } else if (key === 'featured') {
+                    applyQuickTab('featured');
+                } else {
+                    selectStoreCategory(key);
+                }
+            });
+        });
+    }
+
+    function updateActiveCollectionBanner(filteredCount, animate = false) {
+        const banner = document.getElementById('active-collection-banner');
+        const sweep = document.getElementById('active-banner-sweep');
+        const kicker = document.getElementById('active-banner-kicker');
+        const title = document.getElementById('active-banner-title');
+        const subtitle = document.getElementById('active-banner-subtitle');
+        if (!banner) return;
+
+        if (!hasActiveSpotlightCollection()) {
+            banner.classList.add('hidden');
+            banner.classList.remove('animate-catalog-banner');
+            return;
+        }
+
+        let kText = 'Showroom Collection';
+        let tText = 'All Electronics';
+        let sText = `${filteredCount} genuine product${filteredCount === 1 ? '' : 's'} ready for Cash on Delivery.`;
+
+        if (state.wishlistOnly) {
+            kText = 'Saved Collection';
+            tText = 'Saved Wishlist Items';
+        } else if (state.filters.category && state.filters.category !== 'all') {
+            const cat = state.categories.find((c) => c.slug === state.filters.category);
+            kText = 'Category Showcase';
+            tText = cat ? cat.name : 'Selected Category';
+            sText = `${filteredCount} showroom item${filteredCount === 1 ? '' : 's'} in ${tText} · Official Warranty & COD`;
+        } else if (state.filters.minDiscount === '1') {
+            kText = 'Limited Showroom Discounts';
+            tText = 'Sale Items & Special Offers';
+            sText = `${filteredCount} discounted appliance${filteredCount === 1 ? '' : 's'} with instant savings.`;
+        } else if (state.filters.tag === 'Featured') {
+            kText = 'Handpicked Flagship Models';
+            tText = 'Featured Items';
+            sText = `${filteredCount} top-rated electronics selected by Al-Mumtaz Showroom.`;
+        } else if (state.filters.tag === 'Free Delivery') {
+            kText = 'Zero Shipping Fee';
+            tText = 'Free Delivery Electronics';
+            sText = `${filteredCount} eligible appliance${filteredCount === 1 ? '' : 's'} with Free COD Delivery.`;
+        } else if (state.filters.search) {
+            kText = 'Instant Search Results';
+            tText = `Results for "${state.filters.search}"`;
+            sText = `${filteredCount} matching item${filteredCount === 1 ? '' : 's'} in live catalog.`;
+        }
+
+        if (kicker) kicker.textContent = kText;
+        if (title) title.textContent = tText;
+        if (subtitle) subtitle.textContent = sText;
+        renderCatalogQuickCategoryBar();
+
+        banner.classList.remove('hidden');
+        if (animate) {
+            banner.classList.remove('animate-catalog-banner');
+            if (sweep) sweep.classList.remove('animate-banner-sweep');
+            void banner.offsetWidth;
+            banner.classList.add('animate-catalog-banner');
+            if (sweep) sweep.classList.add('animate-banner-sweep');
+        }
+    }
+
+    function selectStoreCategory(slug) {
+        if (state.activeView !== 'store') {
+            switchView('store');
+        }
+        state.wishlistOnly = false;
+        state.filters.minDiscount = '';
+        state.filters.tag = '';
+        state.filters.search = '';
+        state.filters.category = slug || 'all';
+        syncFilterInputsFromState();
+        setActiveQuickTab(state.filters.category === 'all' ? 'all' : 'categories');
+        renderCategories();
+        renderCatalog({ animate: true });
+        promoteStoreSection(state.filters.category === 'all' ? 'default' : 'catalog');
+    }
+
+    function renderCategories(animate = false) {
         const grid = document.getElementById('categories-grid');
         const filterSel = document.getElementById('filter-category');
         if (!grid || !filterSel) return;
@@ -214,13 +375,14 @@
             state.categories.map((c) => `<option value="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</option>`).join('');
         filterSel.value = state.filters.category;
 
-        grid.innerHTML = state.categories.map((cat) => {
+        grid.innerHTML = state.categories.map((cat, idx) => {
             const active = state.filters.category === cat.slug;
             return `
                 <button
                     type="button"
                     data-cat-slug="${escapeHtml(cat.slug)}"
-                    class="cat-card group text-left bg-white border ${active ? 'border-brand-500 ring-2 ring-brand-500/20' : 'border-slate-200 hover:border-slate-400'} rounded-xl overflow-hidden transition-all flex flex-col"
+                    style="--cat-idx:${Math.min(idx, 10)}"
+                    class="${animate ? 'animate-cat-pop ' : ''}cat-card group text-left bg-white border ${active ? 'border-brand-500 ring-2 ring-brand-500/20' : 'border-slate-200 hover:border-slate-400'} rounded-xl overflow-hidden transition-all flex flex-col"
                 >
                     <div class="aspect-[4/3] bg-[#F4F4F5] overflow-hidden w-full">
                         <img src="${escapeHtml(cat.image || '/images/product_qled_tv.jpg')}" alt="${escapeHtml(cat.name)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-300" />
@@ -235,18 +397,12 @@
 
         grid.querySelectorAll('.cat-card').forEach((btn) => {
             btn.addEventListener('click', () => {
-                state.filters.category = btn.dataset.catSlug;
-                state.wishlistOnly = false;
-                document.getElementById('filter-category').value = state.filters.category;
-                setActiveQuickTab('categories');
-                renderCategories();
-                renderCatalog();
-                document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+                selectStoreCategory(btn.dataset.catSlug);
             });
         });
     }
 
-    function createProductCardHtml(p) {
+    function createProductCardHtml(p, idx = 0, animate = false) {
         const isWished = state.wishlist.includes(p.id);
         const imgUrl = escapeHtml(p.images?.[0] || '/images/product_qled_tv.jpg');
         const activeVariant = resolveVariantOption(p, state.cardVariantMap[p.id] || '');
@@ -255,7 +411,7 @@
         const hasDistinctPrices = hasMultiVariants && new Set(p.variantOptions.map((v) => v.discountPrice)).size > 1;
 
         return `
-            <article class="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col hover:border-slate-300 hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <article style="--card-idx:${Math.min(idx, 9)}" class="${animate ? 'animate-card-reveal ' : ''}bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col hover:border-slate-300 hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
                 <div class="relative aspect-[4/3] bg-[#F4F4F5] overflow-hidden cursor-pointer pdp-trigger" data-product-id="${p.id}">
                     <img src="${imgUrl}" alt="${escapeHtml(p.title)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover hover:scale-[1.03] transition-transform duration-300" />
                     ${activeVariant.discountPercentage > 0 ? `<span data-card-badge="${p.id}" class="absolute top-2.5 left-2.5 bg-brand-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-md tabular-nums">-${activeVariant.discountPercentage}% OFF</span>` : ''}
@@ -464,7 +620,8 @@
         return list;
     }
 
-    function renderCatalog() {
+    function renderCatalog(options = {}) {
+        const { animate = false } = options;
         const grid = document.getElementById('catalog-grid');
         const heading = document.getElementById('catalog-heading');
         const countLabel = document.getElementById('catalog-count-label');
@@ -473,33 +630,36 @@
         const filtered = getFilteredProducts();
         if (state.wishlistOnly) {
             heading.textContent = 'Saved Wishlist Items';
+        } else if (state.filters.category !== 'all') {
+            const cat = state.categories.find((c) => c.slug === state.filters.category);
+            heading.textContent = cat ? cat.name : 'Selected Category';
         } else if (state.filters.minDiscount === '1') {
             heading.textContent = 'Sale Items & Special Offers';
         } else if (state.filters.tag === 'Featured') {
             heading.textContent = 'Featured Electronics';
         } else if (state.filters.tag === 'Free Delivery') {
             heading.textContent = 'Free Delivery Electronics';
-        } else if (state.filters.category !== 'all') {
-            const cat = state.categories.find((c) => c.slug === state.filters.category);
-            heading.textContent = cat ? cat.name : 'Selected Category';
+        } else if (state.filters.search) {
+            heading.textContent = `Search: "${state.filters.search}"`;
         } else {
             heading.textContent = 'All Electronics';
         }
 
         countLabel.textContent = `Showing ${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
+        updateActiveCollectionBanner(filtered.length, animate);
 
         if (filtered.length === 0) {
             grid.innerHTML = `
-                <div class="col-span-full bg-white border border-slate-200 rounded-2xl p-10 text-center space-y-3">
+                <div class="col-span-full bg-white border border-slate-200 rounded-2xl p-10 text-center space-y-3 ${animate ? 'animate-card-reveal' : ''}">
                     <p class="font-display font-bold text-slate-900">No products match your current filters.</p>
                     <button id="empty-reset-btn" type="button" class="h-9 px-4 bg-brand-500 text-white text-xs font-semibold rounded-lg">Reset All Filters</button>
                 </div>
             `;
-            document.getElementById('empty-reset-btn')?.addEventListener('click', resetFilters);
+            document.getElementById('empty-reset-btn')?.addEventListener('click', () => resetFilters());
             return;
         }
 
-        grid.innerHTML = filtered.map(createProductCardHtml).join('');
+        grid.innerHTML = filtered.map((p, idx) => createProductCardHtml(p, idx, animate)).join('');
         bindProductCardEvents(grid);
     }
 
@@ -811,7 +971,7 @@
     }
 
     function resetFilters(options = {}) {
-        const { keepQuickTab = false } = options;
+        const { keepQuickTab = false, keepSectionOrder = false, animate = false } = options;
         state.wishlistOnly = false;
         state.filters = {
             category: 'all',
@@ -828,8 +988,11 @@
         if (!keepQuickTab) {
             setActiveQuickTab('all');
         }
-        renderCategories();
-        renderCatalog();
+        renderCategories(animate);
+        renderCatalog({ animate });
+        if (!keepSectionOrder) {
+            promoteStoreSection('default');
+        }
     }
 
     function applyQuickTab(tab) {
@@ -844,30 +1007,30 @@
         setActiveQuickTab(tab);
 
         if (tab === 'all') {
-            resetFilters({ keepQuickTab: true });
-            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+            resetFilters({ keepQuickTab: true, animate: true });
+            promoteStoreSection('default');
         } else if (tab === 'categories') {
-            resetFilters({ keepQuickTab: true });
-            document.getElementById('categories-section')?.scrollIntoView({ behavior: 'smooth' });
+            resetFilters({ keepQuickTab: true, keepSectionOrder: true, animate: true });
+            promoteStoreSection('categories');
         } else if (tab === 'sale') {
-            resetFilters({ keepQuickTab: true });
+            resetFilters({ keepQuickTab: true, keepSectionOrder: true });
             state.filters.minDiscount = '1';
             state.filters.sort = 'discount';
             syncFilterInputsFromState();
-            renderCatalog();
-            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+            renderCatalog({ animate: true });
+            promoteStoreSection('catalog');
         } else if (tab === 'featured') {
-            resetFilters({ keepQuickTab: true });
+            resetFilters({ keepQuickTab: true, keepSectionOrder: true });
             state.filters.tag = 'Featured';
             syncFilterInputsFromState();
-            renderCatalog();
-            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+            renderCatalog({ animate: true });
+            promoteStoreSection('catalog');
         } else if (tab === 'free_delivery') {
-            resetFilters({ keepQuickTab: true });
+            resetFilters({ keepQuickTab: true, keepSectionOrder: true });
             state.filters.tag = 'Free Delivery';
             syncFilterInputsFromState();
-            renderCatalog();
-            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+            renderCatalog({ animate: true });
+            promoteStoreSection('catalog');
         }
     }
 
@@ -908,7 +1071,8 @@
             const q = inputEl.value.trim();
             state.filters.search = q;
             if (state.activeView !== 'store') switchView('store');
-            renderCatalog();
+            renderCatalog({ animate: Boolean(q) });
+            promoteStoreSection(hasActiveSpotlightCollection() ? 'catalog' : 'default');
 
             if (!box || inputEl.id !== 'global-search-input') return;
             if (!q) {
@@ -1066,8 +1230,9 @@
             switchView('store');
         });
         document.getElementById('back-to-store-btn')?.addEventListener('click', () => switchView('store'));
-        document.getElementById('reset-category-btn')?.addEventListener('click', () => resetFilters());
-        document.getElementById('clear-filters-btn')?.addEventListener('click', () => resetFilters());
+        document.getElementById('reset-category-btn')?.addEventListener('click', () => resetFilters({ animate: true }));
+        document.getElementById('active-banner-reset-btn')?.addEventListener('click', () => resetFilters({ animate: true }));
+        document.getElementById('clear-filters-btn')?.addEventListener('click', () => resetFilters({ animate: true }));
 
         document.getElementById('mobile-filter-toggle-btn')?.addEventListener('click', () => {
             const panel = document.getElementById('catalog-filters-panel');
@@ -1077,8 +1242,8 @@
         document.getElementById('wishlist-filter-btn')?.addEventListener('click', () => {
             state.wishlistOnly = !state.wishlistOnly;
             switchView('store');
-            renderCatalog();
-            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+            renderCatalog({ animate: true });
+            promoteStoreSection(hasActiveSpotlightCollection() ? 'catalog' : 'default');
         });
 
         // Order Bag drawer controls
@@ -1142,31 +1307,31 @@
 
         // Filters
         document.getElementById('filter-category')?.addEventListener('change', (e) => {
-            state.filters.category = e.target.value;
-            renderCategories();
-            renderCatalog();
+            selectStoreCategory(e.target.value);
         });
         document.getElementById('filter-price-max')?.addEventListener('input', (e) => {
             const val = Number(e.target.value);
             state.filters.maxPrice = val;
             document.getElementById('filter-price-label').textContent = val >= 300000 ? 'Any' : formatPkr(val);
-            renderCatalog();
+            renderCatalog({ animate: true });
         });
         document.getElementById('filter-discount')?.addEventListener('change', (e) => {
             state.filters.minDiscount = e.target.value;
-            renderCatalog();
+            renderCatalog({ animate: true });
+            promoteStoreSection(hasActiveSpotlightCollection() ? 'catalog' : 'default');
         });
         document.getElementById('filter-tag')?.addEventListener('change', (e) => {
             state.filters.tag = e.target.value;
-            renderCatalog();
+            renderCatalog({ animate: true });
+            promoteStoreSection(hasActiveSpotlightCollection() ? 'catalog' : 'default');
         });
         document.getElementById('filter-instock')?.addEventListener('change', (e) => {
             state.filters.inStock = e.target.checked;
-            renderCatalog();
+            renderCatalog({ animate: true });
         });
         document.getElementById('sort-products')?.addEventListener('change', (e) => {
             state.filters.sort = e.target.value;
-            renderCatalog();
+            renderCatalog({ animate: true });
         });
 
         bindSearchSuggestions(document.getElementById('global-search-input'));

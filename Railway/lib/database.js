@@ -74,18 +74,30 @@ CREATE TABLE IF NOT EXISTS cached_products (
 );
 `);
 
+const rawEnvSiteApi = normalizeRailwayUrl(process.env.SITE_API_URL || '');
+const rawEnvMainOrigin = normalizeRailwayUrl(
+    process.env.MAIN_SITE_URL ||
+    process.env.APP_URL ||
+    (rawEnvSiteApi ? rawEnvSiteApi.replace(/\/api\/?$/i, '') : '') ||
+    process.env.STORE_URL ||
+    ''
+);
+const rawEnvStoreUrl = normalizeRailwayUrl(process.env.STORE_URL || process.env.STORE_PUBLIC_URL || rawEnvMainOrigin || '');
+
 const DEFAULT_VARS = [
     ['Admin_Username', process.env.Admin_Username || process.env.ADMIN_USERNAME || 'admin'],
     ['Admin_Password', process.env.Admin_Password || process.env.ADMIN_PASSWORD || 'AlMumtaz@2026'],
-    ['Admin_Whatsapp', process.env.Admin_Whatsapp || process.env.ADMIN_WHATSAPP_NUMBER || '923299931199'],
+    ['Admin_Whatsapp', process.env.Admin_Whatsapp || process.env.ADMIN_NUMBER || process.env.ADMIN_WHATSAPP_NUMBER || '923299931199'],
     ['Cloudinary_URI', process.env.Cloudinary_URI || ''],
-    ['MAIN_SITE_URL', process.env.SITE_API_URL ? String(process.env.SITE_API_URL).replace(/\/api\/?$/i, '') : (process.env.MAIN_SITE_URL || 'https://al-mumtaz.ai.studio')],
-    ['STORE_PUBLIC_URL', process.env.STORE_URL || process.env.MAIN_SITE_URL || 'https://al-mumtaz.ai.studio'],
+    ['MAIN_SITE_URL', rawEnvMainOrigin || ''],
+    ['SITE_API_URL', rawEnvSiteApi || (rawEnvMainOrigin ? `${rawEnvMainOrigin}/api` : '')],
+    ['STORE_PUBLIC_URL', rawEnvStoreUrl || 'https://al-mumtaz.ai.studio'],
     ['API_SECRET_KEY', process.env.API_SECRET_KEY || 'almumtaz-secret-2026'],
     ['STORE_PAYMENT_INFO', process.env.STORE_PAYMENT_INFO || 'EasyPaisa / JazzCash: 0329-9931199 (Al-Mumtaz Electronics Hasilpur) · Cash on Delivery (COD) also available nationwide.'],
     ['STORE_NAME', process.env.STORE_NAME || 'Al-Mumtaz Electronics'],
     ['STORE_CITY', process.env.STORE_CITY || 'Hasilpur'],
-    ['STORE_ADDRESS', process.env.STORE_ADDRESS || 'Main Railway Road, Hasilpur, District Bahawalpur']
+    ['STORE_ADDRESS', process.env.STORE_ADDRESS || 'Main Railway Road, Hasilpur, District Bahawalpur'],
+    ['STORE_PHONE', process.env.STORE_PHONE || '03299931199']
 ];
 
 const insVar = db.prepare('INSERT OR IGNORE INTO store_variables (key, value) VALUES (?, ?)');
@@ -121,21 +133,40 @@ function getAllVariables() {
     const map = {};
     for (const r of rows) map[r.key] = r.value;
 
-    const mainSiteUrl = normalizeRailwayUrl(process.env.SITE_API_URL ? String(process.env.SITE_API_URL).replace(/\/api\/?$/i, '') : (process.env.MAIN_SITE_URL || map.MAIN_SITE_URL || ''));
-    const storePublicUrl = normalizeRailwayUrl(process.env.STORE_URL || map.STORE_PUBLIC_URL || mainSiteUrl || '') || 'https://al-mumtaz.ai.studio';
+    const envSiteApi = normalizeRailwayUrl(process.env.SITE_API_URL || '');
+    const envMainSite = normalizeRailwayUrl(
+        process.env.MAIN_SITE_URL ||
+        process.env.APP_URL ||
+        (envSiteApi ? envSiteApi.replace(/\/api\/?$/i, '') : '') ||
+        process.env.STORE_URL ||
+        ''
+    );
+    const siteApiUrl = envSiteApi || normalizeRailwayUrl(map.SITE_API_URL || '') || (envMainSite ? `${envMainSite}/api` : (normalizeRailwayUrl(map.MAIN_SITE_URL || '') ? `${normalizeRailwayUrl(map.MAIN_SITE_URL)}/api` : ''));
+    const mainSiteUrl = envMainSite || (siteApiUrl ? siteApiUrl.replace(/\/api\/?$/i, '') : '') || normalizeRailwayUrl(map.MAIN_SITE_URL || '');
+    const storePublicUrl = normalizeRailwayUrl(
+        process.env.STORE_URL ||
+        process.env.STORE_PUBLIC_URL ||
+        map.STORE_PUBLIC_URL ||
+        mainSiteUrl ||
+        ''
+    ) || 'https://al-mumtaz.ai.studio';
+
     return {
         raw: rows,
         map,
         config: {
-            adminWhatsappNumber: process.env.Admin_Whatsapp || process.env.ADMIN_NUMBER || map.Admin_Whatsapp || '923299931199',
+            adminWhatsappNumber: process.env.Admin_Whatsapp || process.env.ADMIN_NUMBER || process.env.ADMIN_WHATSAPP_NUMBER || map.Admin_Whatsapp || '923299931199',
             cloudinaryUri: process.env.Cloudinary_URI || map.Cloudinary_URI || '',
             mainSiteUrl,
+            siteApiUrl,
+            storeUrl: storePublicUrl,
             storePublicUrl,
             apiSecretKey: process.env.API_SECRET_KEY || map.API_SECRET_KEY || 'almumtaz-secret-2026',
             paymentInfo: process.env.STORE_PAYMENT_INFO || map.STORE_PAYMENT_INFO || 'EasyPaisa / JazzCash: 0329-9931199 (Al-Mumtaz Electronics Hasilpur) · Cash on Delivery (COD) also available nationwide.',
             storeName: process.env.STORE_NAME || map.STORE_NAME || 'Al-Mumtaz Electronics',
             storeCity: process.env.STORE_CITY || map.STORE_CITY || 'Hasilpur',
-            storeAddress: process.env.STORE_ADDRESS || map.STORE_ADDRESS || 'Main Railway Road, Hasilpur'
+            storeAddress: process.env.STORE_ADDRESS || map.STORE_ADDRESS || 'Main Railway Road, Hasilpur, District Bahawalpur',
+            storePhone: process.env.STORE_PHONE || map.STORE_PHONE || '03299931199'
         }
     };
 }
@@ -224,7 +255,11 @@ function logWhatsAppEvent(entry) {
 }
 
 function getWhatsAppLogs(limit = 60) {
-    return db.prepare('SELECT * FROM whatsapp_logs ORDER BY id DESC LIMIT ?').all(limit);
+    return db.prepare('SELECT * FROM whatsapp_logs ORDER BY id DESC LIMIT ?').all(limit).map((r) => {
+        let payload = {};
+        try { payload = JSON.parse(r.payloadJson || '{}'); } catch (_) {}
+        return { ...r, payload };
+    });
 }
 
 function upsertWhatsAppSession(phoneNumber, sessionId, status = 'active') {

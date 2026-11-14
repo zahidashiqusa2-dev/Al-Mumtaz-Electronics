@@ -25,8 +25,6 @@
         pendingDeleteOrderId: null,
         pendingDeleteProductId: null,
         pendingDeleteImageId: null,
-        navOpen: false,
-        navSearch: '',
         activeNavId: 'orders-all',
         productLowStockOnly: false,
         productVariants: [{ name: 'Standard', originalPrice: '', discountPrice: '', stock: '' }]
@@ -190,6 +188,46 @@
         backdrop.classList.toggle('hidden', !isOpen);
     }
 
+    function updateSidebarNavCounts() {
+        const orders = adminState.overview?.orders || [];
+        const products = adminState.overview?.products || [];
+        const inquiries = adminState.overview?.inquiries || [];
+        const counts = {
+            'orders-all': orders.length,
+            'orders-pending': orders.filter((o) => o.orderStatus === 'Pending WhatsApp Confirmation').length,
+            'orders-confirmed': orders.filter((o) => o.orderStatus === 'Confirmed').length,
+            'orders-dispatched': orders.filter((o) => o.orderStatus === 'Dispatched' || o.orderStatus === 'Shipped').length,
+            'orders-delivered': orders.filter((o) => o.orderStatus === 'Delivered').length,
+            'orders-cancelled': orders.filter((o) => o.orderStatus === 'Cancelled').length,
+            'products-inventory': products.length,
+            'products-lowstock': products.filter((p) => Number(p.stock) <= 12).length,
+            'wa-inquiries': inquiries.length
+        };
+
+        document.querySelectorAll('[data-nav-count]').forEach((el) => {
+            const key = el.dataset.navCount;
+            if (Object.prototype.hasOwnProperty.call(counts, key)) {
+                el.textContent = String(counts[key]);
+            }
+        });
+    }
+
+    function resolveActiveNavHighlightId() {
+        if (adminState.activeNavId) return adminState.activeNavId;
+        switch (adminState.activeTab) {
+            case 'dashboard': return 'dashboard';
+            case 'products': return adminState.productLowStockOnly ? 'products-lowstock' : 'products-inventory';
+            case 'inquiries': return 'wa-inquiries';
+            case 'analytics': return 'analytics-all';
+            case 'whatsapp': return 'wa-bot-tester';
+            case 'link-whatsapp': return 'wa-link';
+            case 'variables': return 'vars-security';
+            case 'orders':
+            default:
+                return 'orders-all';
+        }
+    }
+
     function syncSidebarActiveUI() {
         const headingEl = document.getElementById('admin-page-heading');
         const titles = {
@@ -206,16 +244,20 @@
             headingEl.textContent = titles[adminState.activeTab] || 'Admin Console';
         }
 
-        document.querySelectorAll('[data-sidebar-tab]').forEach((btn) => {
-            const active = btn.dataset.sidebarTab === adminState.activeTab;
+        const activeNav = resolveActiveNavHighlightId();
+        document.querySelectorAll('.admin-sidebar-link').forEach((btn) => {
+            const targetId = btn.dataset.navAction || btn.dataset.sidebarTab || '';
+            const active = targetId === activeNav;
             btn.classList.toggle('bg-white', active);
             btn.classList.toggle('text-slate-950', active);
             btn.classList.toggle('font-semibold', active);
             btn.classList.toggle('shadow-sm', active);
             btn.classList.toggle('text-slate-400', !active);
+            btn.classList.toggle('font-medium', !active);
             btn.classList.toggle('hover:text-white', !active);
             btn.classList.toggle('hover:bg-white/5', !active);
         });
+        updateSidebarNavCounts();
     }
 
     function openOrderDetailModal(order) {
@@ -921,6 +963,8 @@
         container.querySelectorAll('.jump-cust-order').forEach((btn) => {
             btn.addEventListener('click', () => {
                 adminState.selectedOrderId = btn.dataset.jumpOrder;
+                adminState.orderStatusFilter = 'all';
+                adminState.activeNavId = 'orders-all';
                 adminState.activeTab = 'orders';
                 renderActiveAdminTab();
             });
@@ -2408,10 +2452,19 @@
             });
         });
 
+        const statusNavMap = {
+            'Pending WhatsApp Confirmation': 'orders-pending',
+            Confirmed: 'orders-confirmed',
+            Dispatched: 'orders-dispatched',
+            Delivered: 'orders-delivered',
+            Cancelled: 'orders-cancelled'
+        };
+
         container.querySelectorAll('.drill-cat-orders-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 adminState.orderCategoryFilter = btn.dataset.drillCat || 'all';
                 adminState.orderStatusFilter = adminState.analyticsStatus || 'all';
+                adminState.activeNavId = statusNavMap[adminState.orderStatusFilter] || 'orders-all';
                 adminState.activeTab = 'orders';
                 renderActiveAdminTab();
             });
@@ -2420,6 +2473,7 @@
         document.getElementById('analytics-jump-status-orders')?.addEventListener('click', () => {
             adminState.orderStatusFilter = adminState.analyticsStatus || 'all';
             adminState.orderCategoryFilter = adminState.analyticsCategory || 'all';
+            adminState.activeNavId = statusNavMap[adminState.orderStatusFilter] || 'orders-all';
             adminState.activeTab = 'orders';
             renderActiveAdminTab();
         });
@@ -2427,6 +2481,7 @@
         document.getElementById('analytics-jump-cat-orders')?.addEventListener('click', () => {
             adminState.orderCategoryFilter = adminState.analyticsCategory || 'all';
             adminState.orderStatusFilter = adminState.analyticsStatus || 'all';
+            adminState.activeNavId = statusNavMap[adminState.orderStatusFilter] || 'orders-all';
             adminState.activeTab = 'orders';
             renderActiveAdminTab();
         });
@@ -2719,15 +2774,6 @@
         ];
     }
 
-    function toggleAdminNavigation(forceState = null) {
-        adminState.navOpen = forceState !== null ? Boolean(forceState) : !adminState.navOpen;
-        const drawer = document.getElementById('admin-nav-drawer');
-        const toggleBtn = document.getElementById('admin-nav-toggle-btn');
-        if (drawer) drawer.classList.toggle('hidden', !adminState.navOpen);
-        if (toggleBtn) toggleBtn.setAttribute('aria-expanded', adminState.navOpen ? 'true' : 'false');
-        if (adminState.navOpen) renderAdminNavigation();
-    }
-
     async function executeAdminNavAction(navId) {
         adminState.activeNavId = navId;
         switch (navId) {
@@ -2854,93 +2900,6 @@
             default:
                 break;
         }
-        toggleAdminNavigation(false);
-    }
-
-    function renderAdminNavigation() {
-        const inner = document.getElementById('admin-nav-drawer-inner');
-        if (!inner) return;
-        const groups = getAdminNavigationGroups();
-        const q = adminState.navSearch.trim().toLowerCase();
-        const totalButtons = groups.reduce((acc, g) => acc + g.items.length, 0);
-
-        const filteredGroups = groups
-            .map((g) => ({
-                ...g,
-                items: q
-                    ? g.items.filter((it) => it.label.toLowerCase().includes(q) || it.desc.toLowerCase().includes(q) || g.group.toLowerCase().includes(q))
-                    : g.items
-            }))
-            .filter((g) => g.items.length > 0);
-
-        inner.innerHTML = `
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-                <div>
-                    <h2 class="font-display font-bold text-base text-white">Admin Navigation Directory (${totalButtons} Features)</h2>
-                    <p class="text-xs text-slate-400">Jump directly to any order queue, category analytics view, variant price tool, WhatsApp bot utility, or cloud setting.</p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button id="admin-nav-dashboard-btn" type="button" class="h-8 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-semibold text-white whitespace-nowrap">
-                        Dashboard Hub
-                    </button>
-                    <input
-                        id="admin-nav-search"
-                        type="search"
-                        value="${escapeHtml(adminState.navSearch)}"
-                        placeholder="Search navigation features..."
-                        class="h-8 px-3 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-400 w-52 focus:border-brand-500 focus:outline-none"
-                    />
-                    <button id="admin-nav-close-btn" type="button" class="h-8 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-semibold text-slate-200 whitespace-nowrap">
-                        Close ✕
-                    </button>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                ${filteredGroups.map((g) => `
-                    <div class="space-y-2">
-                        <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-1">${escapeHtml(g.group)}</p>
-                        <div class="flex flex-col gap-1.5">
-                            ${g.items.map((item) => {
-                                const isActive = adminState.activeNavId === item.id;
-                                return `
-                                    <button
-                                        type="button"
-                                        data-nav-action="${escapeHtml(item.id)}"
-                                        class="admin-nav-feature-btn text-left px-3 py-2 rounded-xl border transition-colors ${
-                                            isActive
-                                                ? 'border-brand-500 bg-brand-500/20 text-white'
-                                                : 'border-slate-700 bg-slate-800/80 hover:bg-slate-800 hover:border-brand-500 text-white'
-                                        }"
-                                    >
-                                        <span class="block text-xs font-bold leading-snug">${escapeHtml(item.label)}</span>
-                                        <span class="block text-[10px] text-slate-400 leading-tight mt-0.5">${escapeHtml(item.desc)}</span>
-                                    </button>
-                                `;
-                            }).join('')}
-                        </div>
-                    </div>
-                `).join('') || '<p class="col-span-full text-xs text-slate-400 py-4 text-center">No navigation features match your search.</p>'}
-            </div>
-        `;
-
-        const searchEl = document.getElementById('admin-nav-search');
-        searchEl?.addEventListener('input', (e) => {
-            adminState.navSearch = e.target.value;
-            renderAdminNavigation();
-            const refreshed = document.getElementById('admin-nav-search');
-            if (refreshed) {
-                refreshed.focus();
-                refreshed.setSelectionRange(refreshed.value.length, refreshed.value.length);
-            }
-        });
-
-        document.getElementById('admin-nav-dashboard-btn')?.addEventListener('click', () => executeAdminNavAction('dashboard'));
-        document.getElementById('admin-nav-close-btn')?.addEventListener('click', () => toggleAdminNavigation(false));
-
-        inner.querySelectorAll('.admin-nav-feature-btn').forEach((btn) => {
-            btn.addEventListener('click', () => executeAdminNavAction(btn.dataset.navAction));
-        });
     }
 
     function renderActiveAdminTab() {
@@ -2990,7 +2949,6 @@
         try {
             const data = await adminRequest('/api/admin/overview');
             adminState.overview = data;
-            if (adminState.navOpen) renderAdminNavigation();
             renderActiveAdminTab();
 
             if (keepPreview && existingPreviewHtml && !existingPreviewHidden) {
@@ -3067,34 +3025,21 @@
             toast('Signed out');
         });
 
-        document.querySelectorAll('[data-sidebar-tab]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                adminState.activeTab = btn.dataset.sidebarTab || 'orders';
-                toggleAdminNavigation(false);
-                renderActiveAdminTab();
-            });
+        document.querySelectorAll('[data-nav-action]').forEach((btn) => {
+            btn.addEventListener('click', () => executeAdminNavAction(btn.dataset.navAction));
         });
 
         document.getElementById('admin-home-btn')?.addEventListener('click', () => {
-            adminState.activeTab = 'orders';
-            adminState.activeNavId = 'orders-all';
-            toggleAdminNavigation(false);
-            renderActiveAdminTab();
+            executeAdminNavAction('orders-all');
         });
 
         document.getElementById('admin-quick-notifs-btn')?.addEventListener('click', () => {
-            adminState.activeTab = 'whatsapp';
-            toggleAdminNavigation(false);
-            renderActiveAdminTab();
+            executeAdminNavAction('wa-bot-tester');
         });
 
         document.getElementById('admin-sidebar-open-btn')?.addEventListener('click', () => setSidebarMobileOpen(true));
         document.getElementById('admin-sidebar-close-btn')?.addEventListener('click', () => setSidebarMobileOpen(false));
         document.getElementById('admin-mobile-sidebar-backdrop')?.addEventListener('click', () => setSidebarMobileOpen(false));
-
-        document.getElementById('admin-nav-toggle-btn')?.addEventListener('click', () => {
-            toggleAdminNavigation();
-        });
 
         document.getElementById('admin-refresh-btn')?.addEventListener('click', () => loadAdminOverview());
 

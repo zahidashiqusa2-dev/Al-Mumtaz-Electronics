@@ -8,6 +8,11 @@ const {
     normalizeOrderLookupInput,
     formatPkr,
     buildStoreBaseUrl,
+    buildSiteApiUrl,
+    formatStoreAboutMessage,
+    formatWarrantyDeliveryMessage,
+    formatSolarAdvisorMessage,
+    buildWelcomeStoreMenuLists,
     formatOrderReceiptText,
     formatOrderConfirmationThanksAndShopPrompt,
     formatOrderTrackingMessage,
@@ -130,11 +135,12 @@ function apiHeaders(config = {}) {
 
 async function syncCatalogFromMainSite() {
     const { config } = database.getAllVariables();
-    if (!config.mainSiteUrl) return;
+    const apiBase = buildSiteApiUrl(config);
+    if (!apiBase) return;
     if (Date.now() - lastCatalogSyncAt < 20000) return;
 
     try {
-        const res = await axios.get(`${config.mainSiteUrl}/api/store/bootstrap`, { timeout: 5000 });
+        const res = await axios.get(`${apiBase}/store/bootstrap`, { timeout: 6000 });
         if (res.data?.categories || res.data?.products) {
             database.replaceCatalogCache(res.data.categories || [], res.data.products || []);
             lastCatalogSyncAt = Date.now();
@@ -143,9 +149,10 @@ async function syncCatalogFromMainSite() {
 }
 
 async function fetchLiveCategories(config) {
-    if (config.mainSiteUrl) {
+    const apiBase = buildSiteApiUrl(config);
+    if (apiBase) {
         try {
-            const res = await axios.get(`${config.mainSiteUrl}/api/categories`, { timeout: 5000 });
+            const res = await axios.get(`${apiBase}/categories`, { timeout: 6000 });
             if (Array.isArray(res.data?.categories)) return res.data.categories;
         } catch (_) {}
     }
@@ -153,14 +160,15 @@ async function fetchLiveCategories(config) {
 }
 
 async function fetchLiveProducts(config, queryParams = {}) {
-    if (config.mainSiteUrl) {
+    const apiBase = buildSiteApiUrl(config);
+    if (apiBase) {
         try {
             const url = queryParams.search
-                ? `${config.mainSiteUrl}/api/products/search`
-                : `${config.mainSiteUrl}/api/products`;
+                ? `${apiBase}/products/search`
+                : `${apiBase}/products`;
             const res = await axios.get(url, {
                 params: queryParams.search ? { q: queryParams.search } : queryParams,
-                timeout: 5000
+                timeout: 6000
             });
             if (Array.isArray(res.data?.products)) return res.data.products;
         } catch (_) {}
@@ -174,9 +182,10 @@ async function fetchLiveProducts(config, queryParams = {}) {
 }
 
 async function fetchLiveProductById(config, productId) {
-    if (config.mainSiteUrl) {
+    const apiBase = buildSiteApiUrl(config);
+    if (apiBase) {
         try {
-            const res = await axios.get(`${config.mainSiteUrl}/api/products/${encodeURIComponent(productId)}`, { timeout: 5000 });
+            const res = await axios.get(`${apiBase}/products/${encodeURIComponent(productId)}`, { timeout: 6000 });
             if (res.data?.product) return res.data.product;
         } catch (_) {}
     }
@@ -210,6 +219,7 @@ async function dispatchMessage(recipient, {
     const digits = jid.split('@')[0];
     const { config } = database.getAllVariables();
     const resolvedFooter = footer || `${config.storeName} • ${config.storeCity}`;
+    const storeBaseUrl = buildStoreBaseUrl(config);
 
     let result = { delivered: false, mode: 'standby_recorded', messageId: '' };
 
@@ -226,7 +236,8 @@ async function dispatchMessage(recipient, {
                     footer: resolvedFooter,
                     buttons,
                     lists,
-                    imageUrl
+                    imageUrl,
+                    storeBaseUrl
                 }, quoted);
             } else {
                 sentMsg = quoted
@@ -277,7 +288,7 @@ async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null
         `${greeting} Welcome to *${config.storeName}* (${config.storeCity}).`,
         `Shop Online 24/7: ${storeUrl}`,
         '',
-        'Choose an option below to shop, search, pay, or track your COD order:',
+        'Choose a button or open *Store Menu* below to shop, search, pay, track orders, or view showroom & solar info:',
         '• Tap *Browse Categories* or *Search Products* to view live items & order in chat',
         '• Send *ORD-2026-9336* or *9336* anytime to track delivery status',
         '• Tap *Contact For Inquiry* to message our showroom team'
@@ -286,8 +297,9 @@ async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null
     return await dispatchMessage(recipient, {
         title: `${config.storeName} • ${config.storeCity}`,
         text,
-        footer: `${config.storeName} • ${config.storeCity}`,
+        footer: `Helpline: ${config.storePhone || '03299931199'} • ${config.storeCity}`,
         buttons: buildWelcomeMenuButtons(config),
+        lists: buildWelcomeStoreMenuLists(config),
         messageType: 'store_welcome_menu',
         quoted,
         socketOverride: sock
@@ -361,13 +373,14 @@ async function sendOrderConfirmationPrompt(order) {
 async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawText, orderId, decision, sock, quoted }) {
     const { config } = database.getAllVariables();
     const followUpButtons = buildWelcomeMenuButtons(config);
+    const apiBase = buildSiteApiUrl(config);
 
-    if (config.mainSiteUrl) {
+    if (apiBase) {
         try {
             if (orderId) {
                 const statusPayload = decision === 'Confirmed' ? 'ACCEPTED' : 'CANCELLED';
                 const patchRes = await axios.patch(
-                    `${config.mainSiteUrl}/api/orders/${encodeURIComponent(orderId)}/status`,
+                    `${apiBase}/orders/${encodeURIComponent(orderId)}/status`,
                     { status: statusPayload },
                     { headers: apiHeaders(config), timeout: 8000 }
                 );
@@ -386,6 +399,7 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
                         text: replyText,
                         footer: `${config.storeName} • ${config.storeCity}`,
                         buttons: followUpButtons,
+                        lists: buildWelcomeStoreMenuLists(config),
                         messageType: decision === 'Confirmed' ? 'order_confirmed_reply' : 'order_cancelled_reply',
                         quoted,
                         socketOverride: sock
@@ -409,9 +423,9 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
             }
 
             const res = await axios.post(
-                `${config.mainSiteUrl}/api/whatsapp/webhook`,
+                `${apiBase}/whatsapp/webhook`,
                 { from: senderDigits, senderName, buttonId: rawText, text: rawText },
-                { timeout: 10000 }
+                { headers: apiHeaders(config), timeout: 10000 }
             );
             const outcome = res.data?.outcome;
             if (outcome?.replyText) {
@@ -453,9 +467,11 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
 async function handleRailwayOrderTracking(cleanDigits, query, config, sock = null, quoted = null) {
     trackSessions.delete(cleanDigits);
     const storeUrl = buildStoreBaseUrl(config);
-    if (!config.mainSiteUrl) {
+    const apiBase = buildSiteApiUrl(config);
+
+    if (!apiBase) {
         return await dispatchMessage(cleanDigits, {
-            text: `Order tracking is currently unavailable (MAIN_SITE_URL not linked). Tap *Contact For Inquiry* to check order *${query}*.`,
+            text: `Order tracking requires SITE_API_URL to be configured on Railway. Tap *Contact For Inquiry* to check order *${query}*.`,
             buttons: buildWelcomeMenuButtons(config),
             messageType: 'bot_track_unavailable',
             quoted,
@@ -465,8 +481,8 @@ async function handleRailwayOrderTracking(cleanDigits, query, config, sock = nul
 
     try {
         const res = await axios.get(
-            `${config.mainSiteUrl}/api/orders/${encodeURIComponent(query)}`,
-            { timeout: 8000 }
+            `${apiBase}/orders/${encodeURIComponent(query)}`,
+            { headers: apiHeaders(config), timeout: 8000 }
         );
         const order = res.data?.order;
         if (order) {
@@ -540,12 +556,14 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
 
         checkoutSessions.delete(cleanDigits);
         const city = inferCityFromAddress(text, config);
-        if (config.mainSiteUrl) {
+        const apiBase = buildSiteApiUrl(config);
+        if (apiBase) {
             try {
                 const res = await axios.post(
-                    `${config.mainSiteUrl}/api/orders`,
+                    `${apiBase}/orders`,
                     {
                         productId: session.productId,
+                        variant: session.variant || 'Standard',
                         quantity: session.quantity || 1,
                         customerName: session.customerName || senderName || 'WhatsApp Customer',
                         customerPhone: cleanDigits,
@@ -556,8 +574,22 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
                     { headers: apiHeaders(config), timeout: 10000 }
                 );
                 if (res.data?.order) {
-                    await sendOrderConfirmationPrompt(res.data.order);
-                    return { handled: true, orderCreated: res.data.order };
+                    const order = res.data.order;
+                    await sendOrderConfirmationPrompt(order);
+                    const adminNorm = normalizePakistanWhatsApp(config.adminWhatsappNumber);
+                    if (adminNorm.valid) {
+                        await dispatchMessage(adminNorm.digits, {
+                            text: [
+                                `🛍️ *New WhatsApp Bot COD Order — #${order.orderId}*`,
+                                `Customer: ${order.customerName} (${order.whatsappNumber})`,
+                                `City: ${order.city}`,
+                                `Total (COD): ${formatPkr(order.grandTotal)}`
+                            ].join('\n'),
+                            messageType: 'admin_new_order_alert',
+                            socketOverride: sock
+                        }).catch(() => {});
+                    }
+                    return { handled: true, orderCreated: order };
                 }
             } catch (_) {}
         }
@@ -624,6 +656,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
     const isExplicitMenuOrAction = [
         'menu_categories', 'category_detail', 'menu_offers', 'menu_featured',
         'menu_store', 'menu_track', 'menu_inquiry', 'menu_search', 'menu_pay',
+        'menu_about', 'menu_warranty', 'menu_solar',
         'buy_product', 'pay_target', 'search_query', 'greeting_menu', 'track_order_lookup'
     ].includes(parsedAction.type);
 
@@ -685,9 +718,10 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             adminNumber: adminDigits
         });
 
-        if (config.mainSiteUrl) {
+        const apiBase = buildSiteApiUrl(config);
+        if (apiBase) {
             axios.post(
-                `${config.mainSiteUrl}/api/bridge/inquiry`,
+                `${apiBase}/bridge/inquiry`,
                 {
                     senderJid,
                     senderNumber: cleanDigits,
@@ -803,9 +837,11 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             if (!product) {
                 return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
             }
+            const defaultVariant = product.variants?.[0] || product.variantOptions?.[0]?.name || 'Standard';
             checkoutSessions.set(stateKey, {
                 step: 'awaiting_name',
                 productId: product.id,
+                variant: defaultVariant,
                 quantity: 1,
                 startedAt: Date.now()
             });
@@ -813,10 +849,11 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 title: `Order: ${product.title}`,
                 text: [
                     `🛒 *Quick COD Order — ${product.title}*`,
+                    defaultVariant && defaultVariant !== 'Standard' ? `Selected Variant: *${defaultVariant}*` : null,
                     `Price: *${formatPkr(product.discountPrice)}*`,
                     '',
                     'Step 1 of 2: Please reply with your *Full Name* (or type *cancel* to go back):'
-                ].join('\n'),
+                ].filter(Boolean).join('\n'),
                 messageType: 'bot_checkout_ask_name',
                 quoted,
                 socketOverride: sock
@@ -826,13 +863,28 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'pay_target': {
             clearCustomerSessions(stateKey);
             const rawTarget = String(parsedAction.targetId || '').trim();
-            const product = await fetchLiveProductById(config, rawTarget);
+            const apiBase = buildSiteApiUrl(config);
+            let target = null;
+            if ((/^ORD-/i.test(rawTarget) || /^\d{4,}$/.test(rawTarget)) && apiBase) {
+                try {
+                    const ordRes = await axios.get(`${apiBase}/orders/${encodeURIComponent(rawTarget)}`, { headers: apiHeaders(config), timeout: 6000 });
+                    if (ordRes.data?.order) target = ordRes.data.order;
+                } catch (_) {}
+            }
+            if (!target) {
+                target = await fetchLiveProductById(config, rawTarget);
+            }
             const storeUrl = buildStoreBaseUrl(config);
             return await dispatchMessage(cleanDigits, {
                 title: 'Pay Online / COD Details',
-                text: formatPaymentOptionsMessage(config, product || { orderId: rawTarget }),
+                text: formatPaymentOptionsMessage(config, target || { orderId: rawTarget }),
                 buttons: [
-                    { id: 'pay_website_cta', text: '💳 Open Checkout / Pay', type: 'cta_url', url: `${storeUrl}/?tab=checkout` },
+                    {
+                        id: 'pay_website_cta',
+                        text: '💳 Open Checkout / Pay',
+                        type: 'cta_url',
+                        url: target?.orderId ? `${storeUrl}/track/${target.orderId}` : `${storeUrl}/?tab=checkout`
+                    },
                     { id: 'menu_search', text: '🔍 Search Products', type: 'quick_reply' },
                     { id: 'almumtaz_inquiry', text: '📝 Contact For Inquiry', type: 'quick_reply' }
                 ],
@@ -879,6 +931,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 title: `${config.storeName} Online Store`,
                 text: `🛍️ *${config.storeName} — Online Storefront*\n\nShop online with Cash on Delivery:\n${storeUrl}\n\n• 100% Genuine Branded Electronics\n• Cash on Delivery (COD) Across Pakistan\n• Instant WhatsApp Order Verification`,
                 buttons: buildWelcomeMenuButtons(config),
+                lists: buildWelcomeStoreMenuLists(config),
                 messageType: 'bot_store_info',
                 quoted,
                 socketOverride: sock
@@ -922,6 +975,61 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                     '2. Your *Description / Topic* (which appliance, solar system, or order you want to discuss)'
                 ].join('\n'),
                 messageType: 'bot_inquiry_ask_details',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        case 'menu_about': {
+            clearCustomerSessions(stateKey);
+            const storeUrl = buildStoreBaseUrl(config);
+            return await dispatchMessage(cleanDigits, {
+                title: `${config.storeName} — Showroom & Timings`,
+                text: formatStoreAboutMessage(config),
+                footer: `Helpline: ${config.storePhone || '03299931199'} • ${config.storeCity}`,
+                buttons: [
+                    { id: 'menu_categories', text: '🛍️ Browse Categories', type: 'quick_reply' },
+                    { id: 'almumtaz_inquiry', text: '📝 Contact For Inquiry', type: 'quick_reply' },
+                    { id: 'visit_store_url', text: '🌐 Visit Online Store', type: 'cta_url', url: storeUrl }
+                ],
+                messageType: 'bot_store_about',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        case 'menu_warranty': {
+            clearCustomerSessions(stateKey);
+            const storeUrl = buildStoreBaseUrl(config);
+            return await dispatchMessage(cleanDigits, {
+                title: 'Brand Warranty & COD Delivery',
+                text: formatWarrantyDeliveryMessage(config),
+                footer: `${config.storeName} • Nationwide COD`,
+                buttons: [
+                    { id: 'menu_categories', text: '🛍️ Browse Categories', type: 'quick_reply' },
+                    { id: 'almumtaz_offers', text: '🔥 Offered Items', type: 'quick_reply' },
+                    { id: 'almumtaz_inquiry', text: '📝 Contact For Inquiry', type: 'quick_reply' },
+                    { id: 'visit_store_url', text: '🌐 Visit Online Store', type: 'cta_url', url: storeUrl }
+                ],
+                messageType: 'bot_warranty_delivery',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        case 'menu_solar': {
+            clearCustomerSessions(stateKey);
+            const storeUrl = buildStoreBaseUrl(config);
+            return await dispatchMessage(cleanDigits, {
+                title: 'Solar & Hybrid Inverter Guide',
+                text: formatSolarAdvisorMessage(config),
+                footer: `${config.storeName} • Solar Solutions`,
+                buttons: [
+                    { id: 'cat_solar-inverters', text: '☀️ View Solar Inverters', type: 'quick_reply' },
+                    { id: 'almumtaz_inquiry', text: '📝 Get Custom Solar Quote', type: 'quick_reply' },
+                    { id: 'visit_store_url', text: '🌐 Open Solar Catalog', type: 'cta_url', url: `${storeUrl}/?category=solar-inverters` }
+                ],
+                messageType: 'bot_solar_advisor',
                 quoted,
                 socketOverride: sock
             });

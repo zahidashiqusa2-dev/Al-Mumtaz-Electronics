@@ -69,6 +69,9 @@ app.get(['/', '/health', '/api/health'], (req, res) => {
         service: 'almumtaz-railway-whatsapp-bot',
         store: config.storeName,
         city: config.storeCity,
+        storeUrl: config.storePublicUrl,
+        siteApiConfigured: Boolean(config.siteApiUrl || config.mainSiteUrl),
+        apiSecretConfigured: Boolean(config.apiSecretKey),
         uptime: Math.floor(process.uptime()),
         connectedSessions: sessionManager.getConnectedSessions().length,
         activeSessions: sessionManager.getActiveSessions().length
@@ -88,7 +91,10 @@ app.get('/api/whatsapp/status', requireBridgeAuth, (req, res) => {
     res.json({
         source: 'railway',
         adminWhatsappNumber: config.adminWhatsappNumber,
+        storeUrl: config.storePublicUrl,
+        siteApiUrl: config.siteApiUrl,
         mainSiteUrl: config.mainSiteUrl,
+        apiSecretConfigured: Boolean(config.apiSecretKey),
         connectedSessions: sessionManager.getConnectedSessions(),
         allSessions: sessionManager.getActiveSessions(),
         diagnostics: getVolumeDiagnostics()
