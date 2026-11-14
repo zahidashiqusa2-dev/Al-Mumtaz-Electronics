@@ -41,7 +41,7 @@
   <style>
     body {
       font-family: 'DM Sans', system-ui, sans-serif;
-      background-color: #F8FAFC;
+      background-color: #F7F8FA;
       color: #0F172A;
     }
     h1, h2, h3, h4, .font-display {
@@ -123,7 +123,7 @@
     }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900 antialiased">
+<body class="min-h-screen flex flex-col bg-[#F7F8FA] text-slate-900 antialiased">
 
   <!-- Sticky Single-Row Top Bar -->
   <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90">
@@ -184,7 +184,7 @@
           type="button"
           title="Shopping Bag"
           aria-label="Open Shopping Bag"
-          class="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-slate-950 hover:bg-brand-500 text-white flex items-center justify-center shrink-0 transition-colors shadow-sm"
+          class="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-[#11151C] hover:bg-brand-500 text-white flex items-center justify-center shrink-0 transition-colors shadow-sm"
         >
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
@@ -228,7 +228,7 @@
             <button
               type="button"
               data-quick-tab="all"
-              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-slate-950 text-white border border-slate-950 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+              class="quick-tab-btn h-9 px-3.5 rounded-xl text-xs sm:text-sm font-semibold bg-[#11151C] text-white border border-[#11151C] flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
@@ -316,15 +316,15 @@
 
       <!-- Sale Items & Offers Showcase -->
       <div id="flash-deals-section" class="max-w-7xl mx-auto px-4 sm:px-6 py-7">
-        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-          <div class="bg-slate-950 text-white px-5 sm:px-7 py-4 sm:py-5 flex flex-wrap items-center justify-between gap-4">
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+          <div class="bg-[#11151C] text-white px-5 sm:px-7 py-4 sm:py-5 flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-500">Limited Time Showroom Pricing</p>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#FEF08A]">Limited Time Showroom Pricing</p>
               <h2 class="font-display text-lg sm:text-2xl font-bold text-white mt-0.5">Sale Items &amp; Flash Offers</h2>
             </div>
             <div class="flex items-center gap-2.5 text-xs sm:text-sm font-medium text-slate-300">
               <span>Ends In</span>
-              <span id="flash-countdown" class="font-mono tabular-nums font-semibold bg-brand-500 text-white px-3 py-1 rounded-lg">04:28:19</span>
+              <span id="flash-countdown" class="font-mono tabular-nums font-bold bg-[#FEF08A] text-slate-950 px-3 py-1 rounded-xl">04:28:19</span>
             </div>
           </div>
           <div id="flash-deals-grid" class="p-5 sm:p-7 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5"></div>
@@ -400,11 +400,11 @@
               </div>
 
               <!-- Showroom Card -->
-              <div class="bg-slate-950 text-white rounded-2xl p-5 space-y-2">
-                <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-500">Showroom Guarantee</p>
+              <div class="bg-[#11151C] text-white rounded-2xl p-5 space-y-2">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#FEF08A]">Showroom Guarantee</p>
                 <p class="font-display font-bold text-sm">Al-Mumtaz Electronics · Hasilpur</p>
                 <p class="text-xs text-slate-300 leading-relaxed">Main Railway Road, Hasilpur. Genuine factory-sealed units with open-parcel inspection &amp; automated WhatsApp COD dispatch.</p>
-                <a href="tel:03299931199" class="inline-block pt-1 font-mono text-xs font-bold text-white hover:text-brand-500 transition-colors">Helpline: 03299931199</a>
+                <a href="tel:03299931199" class="inline-block pt-1 font-mono text-xs font-bold text-white hover:text-[#FEF08A] transition-colors">Helpline: 03299931199</a>
               </div>
             </div>
           </aside>
@@ -569,7 +569,7 @@
   </main>
 
   <!-- Detailed Showroom Footer -->
-  <footer class="bg-slate-950 text-slate-300 border-t border-slate-800 mt-auto">
+  <footer class="bg-[#11151C] text-slate-300 border-t border-slate-800 mt-auto">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-1 md:grid-cols-12 gap-8">
       <div class="md:col-span-4 space-y-2.5">
         <p class="font-display font-extrabold text-xl text-white tracking-tight">Al Mumtaz Electronics</p>

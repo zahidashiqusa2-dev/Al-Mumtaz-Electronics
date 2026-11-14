@@ -25,8 +25,8 @@ const HOST = '0.0.0.0';
 app.use((req, res, next) => {
     const allowedOrigin = process.env.CORS_ORIGIN || '*';
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-username, x-admin-password');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-username, x-admin-password, x-api-secret');
     if (req.method === 'OPTIONS') {
         return res.status(204).end();
     }
@@ -37,6 +37,16 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 function requireBridgeAuth(req, res, next) {
+    const { config } = database.getAllVariables();
+    const expectedSecret = String(config.apiSecretKey || '').trim();
+    const headerSecret = String(req.headers['x-api-secret'] || '').trim();
+    const authHeader = req.headers.authorization || '';
+    const bearer = /^Bearer\s+/i.test(authHeader) ? authHeader.replace(/^Bearer\s+/i, '').trim() : '';
+
+    if (expectedSecret && (bearer === expectedSecret || headerSecret === expectedSecret)) {
+        return next();
+    }
+
     const expected = database.getAdminCredentials();
     const headerUser = req.headers['x-admin-username'];
     const headerPass = req.headers['x-admin-password'];
@@ -45,15 +55,11 @@ function requireBridgeAuth(req, res, next) {
         return next();
     }
 
-    const authHeader = req.headers.authorization || '';
-    if (/^Bearer\s+/i.test(authHeader)) {
-        const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-        if (database.validateAdminSession(token)) {
-            return next();
-        }
+    if (bearer && database.validateAdminSession(bearer)) {
+        return next();
     }
 
-    return res.status(401).json({ error: 'Unauthorized Railway bridge request. Check Admin_Username and Admin_Password.' });
+    return res.status(401).json({ error: 'Unauthorized Railway bridge request. Check Admin_Username, Admin_Password, or API_SECRET_KEY.' });
 }
 
 app.get(['/', '/health', '/api/health'], (req, res) => {
@@ -122,17 +128,34 @@ app.post('/api/whatsapp/sessions/clear', requireBridgeAuth, async (req, res) => 
 
 app.post('/api/bridge/send', requireBridgeAuth, async (req, res) => {
     try {
-        const { recipient, text, buttons = [], footer = '', messageType = 'text' } = req.body || {};
+        const { recipient, title = '', text, buttons = [], lists = [], footer = '', imageUrl = '', messageType = 'text' } = req.body || {};
         if (!recipient || !text) {
             return res.status(400).json({ error: 'recipient and text are required.' });
         }
         const dispatch = await whatsappService.dispatchMessage(recipient, {
+            title,
             text,
             buttons,
+            lists,
             footer,
+            imageUrl,
             messageType
         });
         res.json(dispatch);
+    } catch (err) {
+        res.status(500).json({ delivered: false, error: err.message });
+    }
+});
+
+app.post('/webhook/new-website-order', requireBridgeAuth, async (req, res) => {
+    try {
+        const body = req.body || {};
+        const order = body.order || body;
+        if (!order || (!order.orderId && !order.whatsappDigits && !order.customerPhone)) {
+            return res.status(400).json({ error: 'Invalid order webhook payload.' });
+        }
+        const dispatch = await whatsappService.sendOrderConfirmationPrompt(order);
+        res.json({ success: true, orderId: order.orderId || '', dispatch });
     } catch (err) {
         res.status(500).json({ delivered: false, error: err.message });
     }

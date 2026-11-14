@@ -2,20 +2,36 @@
 
 const axios = require('axios');
 const database = require('./database');
-const { sendButtonMessage } = require('./buttonHelper');
+const { sendInteractiveMessage } = require('./buttonHelper');
 const {
     normalizePakistanWhatsApp,
     normalizeOrderLookupInput,
     formatPkr,
+    buildStoreBaseUrl,
+    formatOrderReceiptText,
+    formatOrderConfirmationThanksAndShopPrompt,
     formatOrderTrackingMessage,
-    buildMainBotButtons,
+    formatProductWhatsAppCard,
+    formatPaymentOptionsMessage,
+    buildOrderConfirmationButtons,
+    buildWelcomeMenuButtons,
+    buildProductCardButtons,
     parseIncomingBotAction,
     formatAdminInquiryForward
 } = require('./storeLogic');
 
 const inquirySessions = new Map();
 const trackSessions = new Map();
+const searchSessions = new Map();
+const checkoutSessions = new Map();
 let lastCatalogSyncAt = 0;
+
+function clearCustomerSessions(stateKey, except = '') {
+    if (except !== 'inquiry') inquirySessions.delete(stateKey);
+    if (except !== 'track') trackSessions.delete(stateKey);
+    if (except !== 'search') searchSessions.delete(stateKey);
+    if (except !== 'checkout') checkoutSessions.delete(stateKey);
+}
 
 function getSessionManager() {
     try {
@@ -35,12 +51,18 @@ function toJid(phoneOrJid) {
     return digits ? `${digits}@s.whatsapp.net` : null;
 }
 
-function extractTextFromBaileysMessage(msg) {
+function unwrapBaileysMessageContent(msg) {
     let m = msg?.message;
-    if (!m || typeof m !== 'object') return '';
+    if (!m || typeof m !== 'object') return null;
     if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message;
     if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message;
     if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
+    return m;
+}
+
+function extractTextFromBaileysMessage(msg) {
+    const m = unwrapBaileysMessageContent(msg);
+    if (!m) return '';
 
     if (m.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
         try {
@@ -49,6 +71,13 @@ function extractTextFromBaileysMessage(msg) {
                 return String(params.id || params.display_text).trim();
             }
         } catch (_) {}
+    }
+
+    if (m.productMessage?.product?.title) {
+        return `__catalog_product__:${m.productMessage.product.title}`;
+    }
+    if (m.orderMessage?.orderId || m.orderMessage?.orderTitle) {
+        return `__catalog_order__:${m.orderMessage.orderTitle || m.orderMessage.orderId}`;
     }
 
     return String(
@@ -66,17 +95,37 @@ function extractTextFromBaileysMessage(msg) {
     ).trim();
 }
 
-function formatWhatsAppProductLines(products = []) {
-    return products.map((p, idx) => {
-        const discountStr = p.discountPercentage > 0
-            ? ` (Was ${formatPkr(p.originalPrice)} • *-${p.discountPercentage}% OFF*)`
-            : '';
-        const stockStr = p.stock > 0 ? `${p.stock} in stock` : 'Out of Stock';
-        const variantLine = Array.isArray(p.variantOptions) && p.variantOptions.length > 1
-            ? `\n   Variants: ${p.variantOptions.slice(0, 3).map((v) => `${v.name} (${formatPkr(v.discountPrice)})`).join(' | ')}`
-            : '';
-        return `${idx + 1}. *${p.title}* (${p.sku})\n   Price: *${formatPkr(p.discountPrice)}*${discountStr} · ${stockStr}${variantLine}`;
-    });
+function extractCatalogPayload(msg) {
+    const m = unwrapBaileysMessageContent(msg);
+    if (!m) return null;
+    if (m.productMessage?.product) {
+        return {
+            kind: 'product',
+            title: m.productMessage.product.title || '',
+            productId: m.productMessage.product.productId || '',
+            retailerId: m.productMessage.product.retailerId || ''
+        };
+    }
+    if (m.orderMessage) {
+        return {
+            kind: 'order',
+            orderId: m.orderMessage.orderId || '',
+            orderTitle: m.orderMessage.orderTitle || '',
+            itemCount: Number(m.orderMessage.itemCount || 1),
+            totalAmount1000: Number(m.orderMessage.totalAmount1000 || 0)
+        };
+    }
+    return null;
+}
+
+function apiHeaders(config = {}) {
+    const creds = database.getAdminCredentials();
+    return {
+        'Content-Type': 'application/json',
+        ...(config.apiSecretKey ? { Authorization: `Bearer ${config.apiSecretKey}`, 'x-api-secret': config.apiSecretKey } : {}),
+        'x-admin-username': creds.username,
+        'x-admin-password': creds.password
+    };
 }
 
 async function syncCatalogFromMainSite() {
@@ -93,7 +142,67 @@ async function syncCatalogFromMainSite() {
     } catch (_) {}
 }
 
-async function dispatchMessage(recipient, { text, buttons = [], footer = '', messageType = 'text', quoted = null, socketOverride = null } = {}) {
+async function fetchLiveCategories(config) {
+    if (config.mainSiteUrl) {
+        try {
+            const res = await axios.get(`${config.mainSiteUrl}/api/categories`, { timeout: 5000 });
+            if (Array.isArray(res.data?.categories)) return res.data.categories;
+        } catch (_) {}
+    }
+    return database.getCategories();
+}
+
+async function fetchLiveProducts(config, queryParams = {}) {
+    if (config.mainSiteUrl) {
+        try {
+            const url = queryParams.search
+                ? `${config.mainSiteUrl}/api/products/search`
+                : `${config.mainSiteUrl}/api/products`;
+            const res = await axios.get(url, {
+                params: queryParams.search ? { q: queryParams.search } : queryParams,
+                timeout: 5000
+            });
+            if (Array.isArray(res.data?.products)) return res.data.products;
+        } catch (_) {}
+    }
+    let rows = database.getProducts(queryParams);
+    if (queryParams.search) {
+        const q = String(queryParams.search).toLowerCase();
+        rows = rows.filter((p) => String(p.title || '').toLowerCase().includes(q) || String(p.categorySlug || '').toLowerCase().includes(q));
+    }
+    return rows;
+}
+
+async function fetchLiveProductById(config, productId) {
+    if (config.mainSiteUrl) {
+        try {
+            const res = await axios.get(`${config.mainSiteUrl}/api/products/${encodeURIComponent(productId)}`, { timeout: 5000 });
+            if (res.data?.product) return res.data.product;
+        } catch (_) {}
+    }
+    return database.getProducts().find((p) => Number(p.id) === Number(productId)) || null;
+}
+
+function inferCityFromAddress(addressText, config = {}) {
+    const lower = String(addressText || '').toLowerCase();
+    const known = ['Hasilpur', 'Bahawalpur', 'Vehari', 'Multan', 'Lahore', 'Islamabad', 'Rawalpindi', 'Karachi'];
+    for (const c of known) {
+        if (lower.includes(c.toLowerCase())) return c;
+    }
+    return config.storeCity || 'Hasilpur';
+}
+
+async function dispatchMessage(recipient, {
+    title = '',
+    text,
+    buttons = [],
+    lists = [],
+    footer = '',
+    imageUrl = '',
+    messageType = 'text',
+    quoted = null,
+    socketOverride = null
+} = {}) {
     const jid = toJid(recipient);
     if (!jid) {
         return { delivered: false, mode: 'invalid_recipient', error: 'Invalid recipient phone number.' };
@@ -109,8 +218,16 @@ async function dispatchMessage(recipient, { text, buttons = [], footer = '', mes
     if (sock && typeof sock.sendMessage === 'function') {
         try {
             let sentMsg;
-            if (Array.isArray(buttons) && buttons.length > 0) {
-                sentMsg = await sendButtonMessage(sock, jid, { text, footer: resolvedFooter, buttons }, quoted);
+            const hasInteractive = (Array.isArray(buttons) && buttons.length > 0) || (Array.isArray(lists) && lists.length > 0);
+            if (hasInteractive) {
+                sentMsg = await sendInteractiveMessage(sock, jid, {
+                    title,
+                    text,
+                    footer: resolvedFooter,
+                    buttons,
+                    lists,
+                    imageUrl
+                }, quoted);
             } else {
                 sentMsg = quoted
                     ? await sock.sendMessage(jid, { text }, { quoted })
@@ -132,8 +249,17 @@ async function dispatchMessage(recipient, { text, buttons = [], footer = '', mes
         direction: 'outbound',
         recipient: `+${digits}`,
         messageType,
-        summary: text.slice(0, 1200),
-        payload: { text, buttons, mode: result.mode, messageId: result.messageId, error: result.error || null },
+        summary: String(text || '').slice(0, 1200),
+        payload: {
+            title,
+            text,
+            buttons,
+            lists,
+            imageUrl,
+            mode: result.mode,
+            messageId: result.messageId,
+            error: result.error || null
+        },
         status: result.delivered ? 'delivered' : 'standby_logged'
     });
 
@@ -142,42 +268,149 @@ async function dispatchMessage(recipient, { text, buttons = [], footer = '', mes
 
 async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null, quoted = null) {
     const { config } = database.getAllVariables();
+    const storeUrl = buildStoreBaseUrl(config);
     const greeting = customerName && customerName !== 'Customer'
         ? `Assalam-o-Alaikum *${customerName}*!`
         : 'Assalam-o-Alaikum!';
+
     const text = [
         `${greeting} Welcome to *${config.storeName}* (${config.storeCity}).`,
+        `Shop Online 24/7: ${storeUrl}`,
         '',
-        'Start shopping or track your order right here on WhatsApp:',
-        '• Browse *Items Categories*, *Offered Items*, or *Featured Items*',
-        '• Track any COD order by sending *ORD-2026-9336* or *9336*',
-        '• Tap *Contact For Inquiry* to message our support desk'
+        'Choose an option below to shop, search, pay, or track your COD order:',
+        '• Tap *Browse Categories* or *Search Products* to view live items & order in chat',
+        '• Send *ORD-2026-9336* or *9336* anytime to track delivery status',
+        '• Tap *Contact For Inquiry* to message our showroom team'
     ].join('\n');
 
     return await dispatchMessage(recipient, {
+        title: `${config.storeName} • ${config.storeCity}`,
         text,
         footer: `${config.storeName} • ${config.storeCity}`,
-        buttons: buildMainBotButtons(),
-        messageType: 'store_5_buttons',
+        buttons: buildWelcomeMenuButtons(config),
+        messageType: 'store_welcome_menu',
         quoted,
         socketOverride: sock
     });
 }
 
+async function sendProductCardsList(cleanDigits, items, headingText, config, sock = null, quoted = null) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return await dispatchMessage(cleanDigits, {
+            title: 'No Matching Products',
+            text: `${headingText}\n\nNo items found right now. Try searching another keyword or browse our categories below:`,
+            buttons: buildWelcomeMenuButtons(config),
+            messageType: 'bot_products_empty',
+            quoted,
+            socketOverride: sock
+        });
+    }
+
+    const storeUrl = buildStoreBaseUrl(config);
+    const cards = items.slice(0, 4);
+
+    await dispatchMessage(cleanDigits, {
+        title: headingText,
+        text: `Showing ${cards.length} item(s) from *${config.storeName}*. Tap *Order Now (COD)* or *Pay Online* on any item card, or shop full catalog at ${storeUrl}`,
+        buttons: [
+            { id: 'menu_search', text: '🔍 Search Another Item', type: 'quick_reply' },
+            { id: 'menu_categories', text: '🛍️ Browse Categories', type: 'quick_reply' },
+            { id: 'menu_pay', text: '💳 Pay Now', type: 'quick_reply' }
+        ],
+        messageType: 'bot_products_intro',
+        quoted,
+        socketOverride: sock
+    });
+
+    for (const p of cards) {
+        await dispatchMessage(cleanDigits, {
+            title: p.title,
+            text: formatProductWhatsAppCard(p, config),
+            imageUrl: p.images?.[0] || '',
+            footer: `${config.storeName} • Cash on Delivery`,
+            buttons: buildProductCardButtons(p.id, config),
+            messageType: 'bot_product_card',
+            socketOverride: sock
+        });
+    }
+
+    return { handled: true, count: cards.length };
+}
+
+async function sendOrderConfirmationPrompt(order) {
+    const { config } = database.getAllVariables();
+    const receiptText = formatOrderReceiptText(order, config);
+    const buttons = buildOrderConfirmationButtons(order.orderId);
+    const recipient = order.whatsappDigits || order.customerPhone || order.whatsappNumber;
+
+    const dispatchRes = await dispatchMessage(recipient, {
+        title: `COD Order #${order.orderId}`,
+        text: receiptText,
+        footer: `${config.storeName} • Cash on Delivery Verification`,
+        buttons,
+        messageType: 'cod_order_confirmation'
+    });
+
+    return {
+        ...dispatchRes,
+        receiptText,
+        buttons
+    };
+}
+
 async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawText, orderId, decision, sock, quoted }) {
     const { config } = database.getAllVariables();
-    const followUpButtons = buildMainBotButtons();
+    const followUpButtons = buildWelcomeMenuButtons(config);
 
     if (config.mainSiteUrl) {
         try {
+            if (orderId) {
+                const statusPayload = decision === 'Confirmed' ? 'ACCEPTED' : 'CANCELLED';
+                const patchRes = await axios.patch(
+                    `${config.mainSiteUrl}/api/orders/${encodeURIComponent(orderId)}/status`,
+                    { status: statusPayload },
+                    { headers: apiHeaders(config), timeout: 8000 }
+                );
+                const updated = patchRes.data?.order;
+                if (updated) {
+                    const replyText = decision === 'Confirmed'
+                        ? formatOrderConfirmationThanksAndShopPrompt(updated, config)
+                        : [
+                            `❌ Your order *#${updated.orderId}* has been *CANCELLED* as requested. No charges apply.`,
+                            '',
+                            `Would you like to continue shopping at *${config.storeName}*? Choose an option below anytime:`
+                        ].join('\n');
+
+                    await dispatchMessage(senderDigits, {
+                        title: decision === 'Confirmed' ? `Order #${updated.orderId} Confirmed` : `Order #${updated.orderId} Cancelled`,
+                        text: replyText,
+                        footer: `${config.storeName} • ${config.storeCity}`,
+                        buttons: followUpButtons,
+                        messageType: decision === 'Confirmed' ? 'order_confirmed_reply' : 'order_cancelled_reply',
+                        quoted,
+                        socketOverride: sock
+                    });
+
+                    const adminNorm = normalizePakistanWhatsApp(config.adminWhatsappNumber);
+                    if (adminNorm.valid) {
+                        await dispatchMessage(adminNorm.digits, {
+                            text: [
+                                `📦 *Order ${decision.toUpperCase()} — #${updated.orderId}*`,
+                                `Customer: ${updated.customerName} (${updated.whatsappNumber})`,
+                                `City: ${updated.city}`,
+                                `Grand Total (COD): ${formatPkr(updated.grandTotal)}`
+                            ].join('\n'),
+                            messageType: 'admin_order_alert',
+                            socketOverride: sock
+                        }).catch(() => {});
+                    }
+                    return { found: true, order: updated, replyText, followUpButtons };
+                }
+            }
+
             const res = await axios.post(
                 `${config.mainSiteUrl}/api/whatsapp/webhook`,
-                {
-                    from: senderDigits,
-                    senderName,
-                    buttonId: rawText,
-                    text: rawText
-                },
+                { from: senderDigits, senderName, buttonId: rawText, text: rawText },
                 { timeout: 10000 }
             );
             const outcome = res.data?.outcome;
@@ -190,32 +423,20 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
                     quoted,
                     socketOverride: sock
                 });
-                const adminNorm = normalizePakistanWhatsApp(config.adminWhatsappNumber);
-                if (outcome.order && adminNorm.valid) {
-                    const updated = outcome.order;
-                    await dispatchMessage(adminNorm.digits, {
-                        text: [
-                            `📦 *Order ${decision.toUpperCase()} — #${updated.orderId}*`,
-                            `Customer: ${updated.customerName} (${updated.whatsappNumber})`,
-                            `City: ${updated.city}`,
-                            `Grand Total (COD): ${formatPkr(updated.grandTotal)}`
-                        ].join('\n'),
-                        messageType: 'admin_order_alert',
-                        socketOverride: sock
-                    }).catch(() => {});
-                }
                 return { found: outcome.found, order: outcome.order, replyText: outcome.replyText, followUpButtons };
             }
         } catch (_) {}
     }
 
+    const storeUrl = buildStoreBaseUrl(config);
     const fallbackMsg = decision === 'Confirmed'
         ? [
             `✅ *Thank You!* Your order${orderId ? ` *#${orderId}*` : ''} is *CONFIRMED* at *${config.storeName}*.`,
+            orderId ? `Live Tracking Link: ${storeUrl}/track/${orderId}` : '',
             '',
             '🛍️ *Would you like to start shopping on WhatsApp?*',
             'Tap any button below to browse items, offers, or track your order:'
-        ].join('\n')
+        ].filter(Boolean).join('\n')
         : `Your *${decision}* request${orderId ? ` for Order *#${orderId}*` : ''} has been received by ${config.storeName}.`;
 
     await dispatchMessage(senderDigits, {
@@ -231,10 +452,11 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
 
 async function handleRailwayOrderTracking(cleanDigits, query, config, sock = null, quoted = null) {
     trackSessions.delete(cleanDigits);
+    const storeUrl = buildStoreBaseUrl(config);
     if (!config.mainSiteUrl) {
         return await dispatchMessage(cleanDigits, {
             text: `Order tracking is currently unavailable (MAIN_SITE_URL not linked). Tap *Contact For Inquiry* to check order *${query}*.`,
-            buttons: buildMainBotButtons(),
+            buttons: buildWelcomeMenuButtons(config),
             messageType: 'bot_track_unavailable',
             quoted,
             socketOverride: sock
@@ -243,15 +465,19 @@ async function handleRailwayOrderTracking(cleanDigits, query, config, sock = nul
 
     try {
         const res = await axios.get(
-            `${config.mainSiteUrl}/api/orders/track/${encodeURIComponent(query)}`,
+            `${config.mainSiteUrl}/api/orders/${encodeURIComponent(query)}`,
             { timeout: 8000 }
         );
         const order = res.data?.order;
         if (order) {
             return await dispatchMessage(cleanDigits, {
+                title: `Order #${order.orderId} Status`,
                 text: formatOrderTrackingMessage(order, config),
                 footer: `${config.storeName} • Order Tracking`,
-                buttons: buildMainBotButtons(),
+                buttons: [
+                    { id: 'track_online_url', text: '📦 Track on Website', type: 'cta_url', url: `${storeUrl}/track/${order.orderId}` },
+                    ...buildWelcomeMenuButtons(config).slice(0, 4)
+                ],
                 messageType: 'bot_track_result',
                 quoted,
                 socketOverride: sock
@@ -260,18 +486,94 @@ async function handleRailwayOrderTracking(cleanDigits, query, config, sock = nul
     } catch (_) {}
 
     return await dispatchMessage(cleanDigits, {
+        title: 'Order Not Found',
         text: [
             `🔍 We could not find an order matching *${query}*.`,
             'Please check your Order ID (for example *ORD-2026-9336* or the 4-digit code *9336*) and try again:'
         ].join('\n'),
-        buttons: buildMainBotButtons(),
+        buttons: buildWelcomeMenuButtons(config),
         messageType: 'bot_track_not_found',
         quoted,
         socketOverride: sock
     });
 }
 
-async function processIncomingMessage({ senderJid, senderName = 'Customer', rawText = '', sock = null, quoted = null }) {
+async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, session, config, sock, quoted) {
+    const text = String(rawText || '').trim();
+    if (/^(?:cancel|stop|exit|menu)$/i.test(text)) {
+        checkoutSessions.delete(cleanDigits);
+        return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
+    }
+
+    if (session.step === 'awaiting_name') {
+        if (text.length < 2) {
+            return await dispatchMessage(cleanDigits, {
+                text: 'Please reply with your *Full Name* to place your COD order (or type *cancel* to exit):',
+                messageType: 'bot_checkout_retry_name',
+                quoted,
+                socketOverride: sock
+            });
+        }
+        checkoutSessions.set(cleanDigits, {
+            ...session,
+            step: 'awaiting_address',
+            customerName: text
+        });
+        return await dispatchMessage(cleanDigits, {
+            title: 'Step 2 of 2: Delivery Address',
+            text: `Thanks, *${text}*! Now please reply with your *Complete Delivery Address & City* (e.g. *House 14, Model Town, Hasilpur*):`,
+            messageType: 'bot_checkout_ask_address',
+            quoted,
+            socketOverride: sock
+        });
+    }
+
+    if (session.step === 'awaiting_address') {
+        if (text.length < 5) {
+            return await dispatchMessage(cleanDigits, {
+                text: 'Please share a complete street address and city so our courier can deliver your parcel:',
+                messageType: 'bot_checkout_retry_address',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        checkoutSessions.delete(cleanDigits);
+        const city = inferCityFromAddress(text, config);
+        if (config.mainSiteUrl) {
+            try {
+                const res = await axios.post(
+                    `${config.mainSiteUrl}/api/orders`,
+                    {
+                        productId: session.productId,
+                        quantity: session.quantity || 1,
+                        customerName: session.customerName || senderName || 'WhatsApp Customer',
+                        customerPhone: cleanDigits,
+                        shippingAddress: text,
+                        city,
+                        source: 'WHATSAPP_BOT'
+                    },
+                    { headers: apiHeaders(config), timeout: 10000 }
+                );
+                if (res.data?.order) {
+                    await sendOrderConfirmationPrompt(res.data.order);
+                    return { handled: true, orderCreated: res.data.order };
+                }
+            } catch (_) {}
+        }
+
+        return await dispatchMessage(cleanDigits, {
+            title: 'Order Request Received',
+            text: `Thanks *${session.customerName}*! Your COD request has been logged for *${text}*. Our team will confirm shortly.`,
+            buttons: buildWelcomeMenuButtons(config),
+            messageType: 'bot_checkout_fallback_ack',
+            quoted,
+            socketOverride: sock
+        });
+    }
+}
+
+async function processIncomingMessage({ senderJid, senderName = 'Customer', rawText = '', catalogPayload = null, sock = null, quoted = null }) {
     const cleanDigits = String(senderJid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
     if (!cleanDigits) return { handled: false };
 
@@ -281,16 +583,33 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
     database.logWhatsAppEvent({
         direction: 'inbound',
         recipient: `+${cleanDigits}`,
-        messageType: 'customer_message',
-        summary: rawText.slice(0, 220) || '(empty)',
-        payload: { senderName, rawText },
+        messageType: catalogPayload ? `catalog_${catalogPayload.kind}` : 'customer_message',
+        summary: String(rawText || '').slice(0, 220) || '(empty)',
+        payload: { senderName, rawText, catalogPayload },
         status: 'received'
     });
 
+    if (catalogPayload) {
+        clearCustomerSessions(stateKey);
+        if (catalogPayload.kind === 'product' && catalogPayload.title) {
+            const matched = (await fetchLiveProducts(config, { search: catalogPayload.title })).slice(0, 3);
+            if (matched.length > 0) {
+                return await sendProductCardsList(cleanDigits, matched, 'WhatsApp Catalog Match', config, sock, quoted);
+            }
+        }
+        return await dispatchMessage(cleanDigits, {
+            title: 'WhatsApp Catalog Selection',
+            text: `Thanks for sharing an item from our WhatsApp Catalog! Use the options below to order, search, or contact our showroom:`,
+            buttons: buildWelcomeMenuButtons(config),
+            messageType: 'catalog_ack',
+            quoted,
+            socketOverride: sock
+        });
+    }
+
     const parsedAction = parseIncomingBotAction(rawText);
     if (parsedAction.type === 'order_decision' || parsedAction.type === 'order_decision_latest') {
-        inquirySessions.delete(stateKey);
-        trackSessions.delete(stateKey);
+        clearCustomerSessions(stateKey);
         return await forwardOrderDecisionToMainSite({
             senderDigits: cleanDigits,
             senderName,
@@ -302,12 +621,26 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         });
     }
 
-    const pendingTrack = trackSessions.get(stateKey);
     const isExplicitMenuOrAction = [
         'menu_categories', 'category_detail', 'menu_offers', 'menu_featured',
-        'menu_store', 'menu_track', 'menu_inquiry', 'greeting_menu', 'track_order_lookup'
+        'menu_store', 'menu_track', 'menu_inquiry', 'menu_search', 'menu_pay',
+        'buy_product', 'pay_target', 'search_query', 'greeting_menu', 'track_order_lookup'
     ].includes(parsedAction.type);
 
+    const pendingCheckout = checkoutSessions.get(stateKey);
+    if (pendingCheckout && !isExplicitMenuOrAction) {
+        return await handleInChatCheckoutStep(cleanDigits, senderName, rawText, pendingCheckout, config, sock, quoted);
+    }
+
+    const pendingSearch = searchSessions.get(stateKey);
+    if (pendingSearch && pendingSearch.step === 'awaiting_query' && !isExplicitMenuOrAction) {
+        searchSessions.delete(stateKey);
+        const query = String(rawText || '').trim();
+        const matches = await fetchLiveProducts(config, { search: query });
+        return await sendProductCardsList(cleanDigits, matches, `Search Results for "${query}"`, config, sock, quoted);
+    }
+
+    const pendingTrack = trackSessions.get(stateKey);
     if (pendingTrack && pendingTrack.step === 'awaiting_order_id' && !isExplicitMenuOrAction) {
         const lookup = normalizeOrderLookupInput(rawText);
         if (lookup.isFullId || lookup.isShortDigits) {
@@ -315,7 +648,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         }
         return await dispatchMessage(cleanDigits, {
             text: 'Please send your valid Order ID (e.g. *ORD-2026-9336*) or the 4-digit code (e.g. *9336*), or tap *Contact For Inquiry* below.',
-            buttons: buildMainBotButtons(),
+            buttons: buildWelcomeMenuButtons(config),
             messageType: 'bot_track_retry',
             quoted,
             socketOverride: sock
@@ -323,7 +656,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
     }
 
     if (parsedAction.type === 'track_order_lookup') {
-        inquirySessions.delete(stateKey);
+        clearCustomerSessions(stateKey);
         return await handleRailwayOrderTracking(cleanDigits, parsedAction.query, config, sock, quoted);
     }
 
@@ -353,7 +686,6 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         });
 
         if (config.mainSiteUrl) {
-            const creds = database.getAdminCredentials();
             axios.post(
                 `${config.mainSiteUrl}/api/bridge/inquiry`,
                 {
@@ -363,14 +695,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                     description,
                     adminNumber: adminDigits
                 },
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-admin-username': creds.username,
-                        'x-admin-password': creds.password
-                    },
-                    timeout: 8000
-                }
+                { headers: apiHeaders(config), timeout: 8000 }
             ).catch(() => {});
         }
 
@@ -389,6 +714,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         });
 
         return await dispatchMessage(cleanDigits, {
+            title: 'Inquiry Sent to Showroom Desk',
             text: [
                 `✅ Thank you, *${senderName || 'Valued Customer'}*!`,
                 `Your inquiry details have been forwarded to our *${config.storeName}* support desk.`,
@@ -396,7 +722,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 '',
                 'Explore more below or reply anytime to reopen the store menu:'
             ].join('\n'),
-            buttons: buildMainBotButtons(),
+            buttons: buildWelcomeMenuButtons(config),
             messageType: 'inquiry_submitted_ack',
             quoted,
             socketOverride: sock
@@ -407,20 +733,32 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
     switch (parsedAction.type) {
         case 'menu_categories': {
-            inquirySessions.delete(stateKey);
-            trackSessions.delete(stateKey);
-            const categories = database.getCategories();
+            clearCustomerSessions(stateKey);
+            const categories = await fetchLiveCategories(config);
+            const storeUrl = buildStoreBaseUrl(config);
             const catLines = categories.map((c, idx) => `${idx + 1}. *${c.name}* (${c.productCount || 0} items) — reply \`cat_${c.slug}\``);
-            const catButtons = categories.slice(0, 4).map((c) => ({
-                id: `cat_${c.slug}`,
-                text: c.name.slice(0, 22)
-            }));
-            catButtons.push({ id: 'almumtaz_track', text: 'Track Order' });
-            catButtons.push({ id: 'almumtaz_inquiry', text: 'Contact For Inquiry' });
-
+            const lists = categories.length > 0
+                ? [{
+                    title: '🛍️ Browse Categories',
+                    sections: [{
+                        title: 'Store Departments',
+                        rows: categories.map((c) => ({
+                            id: `cat_${c.slug}`,
+                            title: c.name,
+                            description: `${c.productCount || 0} products available`
+                        }))
+                    }]
+                }]
+                : [];
             return await dispatchMessage(cleanDigits, {
-                text: `📂 *${config.storeName} — Product Categories*\n\n${catLines.join('\n')}\n\nTap a category below or reply with its code to view products & prices:`,
-                buttons: catButtons,
+                title: `${config.storeName} — Categories`,
+                text: `📂 *${config.storeName} — Product Categories*\n\n${catLines.join('\n')}\n\nSelect a category or reply with its code to view products & prices:`,
+                lists,
+                buttons: [
+                    { id: 'menu_search', text: '🔍 Search Products', type: 'quick_reply' },
+                    { id: 'menu_pay', text: '💳 Pay Now', type: 'quick_reply' },
+                    { id: 'visit_store_url', text: '🌐 Visit Store', type: 'cta_url', url: storeUrl }
+                ],
                 messageType: 'bot_categories',
                 quoted,
                 socketOverride: sock
@@ -428,68 +766,119 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         }
 
         case 'category_detail': {
-            inquirySessions.delete(stateKey);
-            trackSessions.delete(stateKey);
-            const items = database.getProducts({ category: parsedAction.slug }).slice(0, 6);
-            if (items.length === 0) {
+            clearCustomerSessions(stateKey);
+            const items = await fetchLiveProducts(config, { category: parsedAction.slug });
+            return await sendProductCardsList(cleanDigits, items, `Category: ${parsedAction.slug}`, config, sock, quoted);
+        }
+
+        case 'menu_search': {
+            clearCustomerSessions(stateKey, 'search');
+            searchSessions.set(stateKey, {
+                step: 'awaiting_query',
+                senderName,
+                startedAt: Date.now()
+            });
+            return await dispatchMessage(cleanDigits, {
+                title: 'Search Al-Mumtaz Catalog',
+                text: [
+                    `🔍 *Search Products — ${config.storeName}*`,
+                    'Please type the *product name, brand, or SKU* you are looking for:',
+                    '• Example: _QLED TV_, _6kW Inverter_, _Gree AC_, _Fan_'
+                ].join('\n'),
+                messageType: 'bot_search_ask_query',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        case 'search_query': {
+            clearCustomerSessions(stateKey);
+            const matches = await fetchLiveProducts(config, { search: parsedAction.query });
+            return await sendProductCardsList(cleanDigits, matches, `Search Results for "${parsedAction.query}"`, config, sock, quoted);
+        }
+
+        case 'buy_product': {
+            clearCustomerSessions(stateKey, 'checkout');
+            const product = await fetchLiveProductById(config, parsedAction.productId);
+            if (!product) {
                 return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
             }
-            const lines = formatWhatsAppProductLines(items);
-            const orderHint = config.storePublicUrl
-                ? `\n\nOrder online with COD: ${config.storePublicUrl}`
-                : '\n\nTap *Contact For Inquiry* below to reserve any item on WhatsApp!';
+            checkoutSessions.set(stateKey, {
+                step: 'awaiting_name',
+                productId: product.id,
+                quantity: 1,
+                startedAt: Date.now()
+            });
             return await dispatchMessage(cleanDigits, {
-                text: `📦 *Category Selection — ${config.storeName}*\n\n${lines.join('\n\n')}${orderHint}`,
-                buttons: buildMainBotButtons(),
-                messageType: 'bot_category_products',
+                title: `Order: ${product.title}`,
+                text: [
+                    `🛒 *Quick COD Order — ${product.title}*`,
+                    `Price: *${formatPkr(product.discountPrice)}*`,
+                    '',
+                    'Step 1 of 2: Please reply with your *Full Name* (or type *cancel* to go back):'
+                ].join('\n'),
+                messageType: 'bot_checkout_ask_name',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        case 'pay_target': {
+            clearCustomerSessions(stateKey);
+            const rawTarget = String(parsedAction.targetId || '').trim();
+            const product = await fetchLiveProductById(config, rawTarget);
+            const storeUrl = buildStoreBaseUrl(config);
+            return await dispatchMessage(cleanDigits, {
+                title: 'Pay Online / COD Details',
+                text: formatPaymentOptionsMessage(config, product || { orderId: rawTarget }),
+                buttons: [
+                    { id: 'pay_website_cta', text: '💳 Open Checkout / Pay', type: 'cta_url', url: `${storeUrl}/?tab=checkout` },
+                    { id: 'menu_search', text: '🔍 Search Products', type: 'quick_reply' },
+                    { id: 'almumtaz_inquiry', text: '📝 Contact For Inquiry', type: 'quick_reply' }
+                ],
+                messageType: 'bot_payment_options',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
+        case 'menu_pay': {
+            clearCustomerSessions(stateKey);
+            const storeUrl = buildStoreBaseUrl(config);
+            return await dispatchMessage(cleanDigits, {
+                title: 'Online Payment & COD',
+                text: formatPaymentOptionsMessage(config, null),
+                buttons: [
+                    { id: 'pay_website_cta', text: '🌐 Pay on Website', type: 'cta_url', url: `${storeUrl}/?tab=checkout` },
+                    { id: 'menu_categories', text: '🛍️ Browse Categories', type: 'quick_reply' },
+                    { id: 'menu_search', text: '🔍 Search Products', type: 'quick_reply' },
+                    { id: 'almumtaz_inquiry', text: '📝 Contact For Inquiry', type: 'quick_reply' }
+                ],
+                messageType: 'bot_payment_options',
                 quoted,
                 socketOverride: sock
             });
         }
 
         case 'menu_offers': {
-            inquirySessions.delete(stateKey);
-            trackSessions.delete(stateKey);
-            const offers = database.getProducts({ flashSale: true, sort: 'discount' }).slice(0, 6);
-            const lines = formatWhatsAppProductLines(offers);
-            const orderHint = config.storePublicUrl
-                ? `\n\nShop offers online: ${config.storePublicUrl}`
-                : '';
-            return await dispatchMessage(cleanDigits, {
-                text: `🔥 *Offered Items & Flash Deals — ${config.storeName}*\n\n${lines.join('\n\n')}${orderHint}`,
-                buttons: buildMainBotButtons(),
-                messageType: 'bot_offered_items',
-                quoted,
-                socketOverride: sock
-            });
+            clearCustomerSessions(stateKey);
+            const offers = await fetchLiveProducts(config, { flashSale: true, sort: 'discount' });
+            return await sendProductCardsList(cleanDigits, offers, 'Flash Deals & Offered Items', config, sock, quoted);
         }
 
         case 'menu_featured': {
-            inquirySessions.delete(stateKey);
-            trackSessions.delete(stateKey);
-            const featured = database.getProducts({ featured: true }).slice(0, 6);
-            const lines = formatWhatsAppProductLines(featured);
-            const orderHint = config.storePublicUrl
-                ? `\n\nShop featured gear: ${config.storePublicUrl}`
-                : '';
-            return await dispatchMessage(cleanDigits, {
-                text: `⭐ *Featured Electronics — ${config.storeName}*\n\n${lines.join('\n\n')}${orderHint}`,
-                buttons: buildMainBotButtons(),
-                messageType: 'bot_featured_items',
-                quoted,
-                socketOverride: sock
-            });
+            clearCustomerSessions(stateKey);
+            const featured = await fetchLiveProducts(config, { featured: true });
+            return await sendProductCardsList(cleanDigits, featured, 'Featured Electronics', config, sock, quoted);
         }
 
         case 'menu_store': {
-            inquirySessions.delete(stateKey);
-            trackSessions.delete(stateKey);
-            const urlText = config.storePublicUrl
-                ? `Shop online with Cash on Delivery:\n${config.storePublicUrl}`
-                : `Visit our online storefront or showroom at *${config.storeAddress}* (${config.storeCity}).`;
+            clearCustomerSessions(stateKey);
+            const storeUrl = buildStoreBaseUrl(config);
             return await dispatchMessage(cleanDigits, {
-                text: `🛍️ *${config.storeName} — Online Storefront*\n\n${urlText}\n\n• 100% Genuine Branded Electronics\n• Cash on Delivery (COD) Across Pakistan\n• Instant WhatsApp Order Verification`,
-                buttons: buildMainBotButtons(),
+                title: `${config.storeName} Online Store`,
+                text: `🛍️ *${config.storeName} — Online Storefront*\n\nShop online with Cash on Delivery:\n${storeUrl}\n\n• 100% Genuine Branded Electronics\n• Cash on Delivery (COD) Across Pakistan\n• Instant WhatsApp Order Verification`,
+                buttons: buildWelcomeMenuButtons(config),
                 messageType: 'bot_store_info',
                 quoted,
                 socketOverride: sock
@@ -497,13 +886,14 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         }
 
         case 'menu_track': {
-            inquirySessions.delete(stateKey);
+            clearCustomerSessions(stateKey, 'track');
             trackSessions.set(stateKey, {
                 step: 'awaiting_order_id',
                 senderName,
                 startedAt: Date.now()
             });
             return await dispatchMessage(cleanDigits, {
+                title: 'Track Your COD Order',
                 text: [
                     `📦 *Track Your COD Order — ${config.storeName}*`,
                     'Please reply with your *Order ID* or *4-digit code*:',
@@ -517,13 +907,14 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         }
 
         case 'menu_inquiry': {
-            trackSessions.delete(stateKey);
+            clearCustomerSessions(stateKey, 'inquiry');
             inquirySessions.set(stateKey, {
                 step: 'awaiting_description',
                 senderName,
                 startedAt: Date.now()
             });
             return await dispatchMessage(cleanDigits, {
+                title: 'Contact For Inquiry',
                 text: [
                     `📝 *Contact For Inquiry — ${config.storeName}*`,
                     'Please reply with a single message containing:',
@@ -538,8 +929,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
         case 'greeting_menu':
         default: {
-            inquirySessions.delete(stateKey);
-            trackSessions.delete(stateKey);
+            clearCustomerSessions(stateKey);
             return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
         }
     }
@@ -557,13 +947,15 @@ async function handleIncomingBaileysUpsert(sock, chatUpdate) {
                 continue;
             }
 
+            const catalogPayload = extractCatalogPayload(msg);
             const rawText = extractTextFromBaileysMessage(msg);
-            if (!rawText) continue;
+            if (!rawText && !catalogPayload) continue;
 
             await processIncomingMessage({
                 senderJid: jid,
                 senderName: msg.pushName || 'Customer',
                 rawText,
+                catalogPayload,
                 sock,
                 quoted: msg
             });
@@ -576,7 +968,9 @@ async function handleIncomingBaileysUpsert(sock, chatUpdate) {
 module.exports = {
     dispatchMessage,
     sendFiveButtonStoreMenu,
+    sendOrderConfirmationPrompt,
     processIncomingMessage,
     handleIncomingBaileysUpsert,
-    extractTextFromBaileysMessage
+    extractTextFromBaileysMessage,
+    extractCatalogPayload
 };

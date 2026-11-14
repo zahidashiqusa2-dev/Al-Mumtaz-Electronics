@@ -79,7 +79,10 @@ const DEFAULT_VARS = [
     ['Admin_Password', process.env.Admin_Password || process.env.ADMIN_PASSWORD || 'AlMumtaz@2026'],
     ['Admin_Whatsapp', process.env.Admin_Whatsapp || process.env.ADMIN_WHATSAPP_NUMBER || '923299931199'],
     ['Cloudinary_URI', process.env.Cloudinary_URI || ''],
-    ['MAIN_SITE_URL', process.env.MAIN_SITE_URL || ''],
+    ['MAIN_SITE_URL', process.env.SITE_API_URL ? String(process.env.SITE_API_URL).replace(/\/api\/?$/i, '') : (process.env.MAIN_SITE_URL || 'https://al-mumtaz.ai.studio')],
+    ['STORE_PUBLIC_URL', process.env.STORE_URL || process.env.MAIN_SITE_URL || 'https://al-mumtaz.ai.studio'],
+    ['API_SECRET_KEY', process.env.API_SECRET_KEY || 'almumtaz-secret-2026'],
+    ['STORE_PAYMENT_INFO', process.env.STORE_PAYMENT_INFO || 'EasyPaisa / JazzCash: 0329-9931199 (Al-Mumtaz Electronics Hasilpur) · Cash on Delivery (COD) also available nationwide.'],
     ['STORE_NAME', process.env.STORE_NAME || 'Al-Mumtaz Electronics'],
     ['STORE_CITY', process.env.STORE_CITY || 'Hasilpur'],
     ['STORE_ADDRESS', process.env.STORE_ADDRESS || 'Main Railway Road, Hasilpur, District Bahawalpur']
@@ -118,15 +121,18 @@ function getAllVariables() {
     const map = {};
     for (const r of rows) map[r.key] = r.value;
 
-    const mainSiteUrl = normalizeRailwayUrl(process.env.MAIN_SITE_URL || map.MAIN_SITE_URL || '');
+    const mainSiteUrl = normalizeRailwayUrl(process.env.SITE_API_URL ? String(process.env.SITE_API_URL).replace(/\/api\/?$/i, '') : (process.env.MAIN_SITE_URL || map.MAIN_SITE_URL || ''));
+    const storePublicUrl = normalizeRailwayUrl(process.env.STORE_URL || map.STORE_PUBLIC_URL || mainSiteUrl || '') || 'https://al-mumtaz.ai.studio';
     return {
         raw: rows,
         map,
         config: {
-            adminWhatsappNumber: process.env.Admin_Whatsapp || map.Admin_Whatsapp || '923299931199',
+            adminWhatsappNumber: process.env.Admin_Whatsapp || process.env.ADMIN_NUMBER || map.Admin_Whatsapp || '923299931199',
             cloudinaryUri: process.env.Cloudinary_URI || map.Cloudinary_URI || '',
             mainSiteUrl,
-            storePublicUrl: mainSiteUrl,
+            storePublicUrl,
+            apiSecretKey: process.env.API_SECRET_KEY || map.API_SECRET_KEY || 'almumtaz-secret-2026',
+            paymentInfo: process.env.STORE_PAYMENT_INFO || map.STORE_PAYMENT_INFO || 'EasyPaisa / JazzCash: 0329-9931199 (Al-Mumtaz Electronics Hasilpur) · Cash on Delivery (COD) also available nationwide.',
             storeName: process.env.STORE_NAME || map.STORE_NAME || 'Al-Mumtaz Electronics',
             storeCity: process.env.STORE_CITY || map.STORE_CITY || 'Hasilpur',
             storeAddress: process.env.STORE_ADDRESS || map.STORE_ADDRESS || 'Main Railway Road, Hasilpur'

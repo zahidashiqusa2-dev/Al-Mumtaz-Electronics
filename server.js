@@ -19,6 +19,7 @@ const mediaStore = require('./lib/mediaStore');
 const { getVolumeDiagnostics } = require('./lib/storagePaths');
 const {
     ALLOWED_ORDER_STATUSES,
+    normalizeOrderStatus,
     normalizePakistanWhatsApp,
     calculateOrderTotals,
     resolveProductVariantPrice,
@@ -55,7 +56,7 @@ app.use((req, res, next) => {
     const allowedOrigin = process.env.CORS_ORIGIN || '*';
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-username, x-admin-password');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-username, x-admin-password, x-api-secret');
     if (req.method === 'OPTIONS') {
         return res.status(204).end();
     }
@@ -75,6 +76,12 @@ app.use((req, res, next) => {
 // Dedicated /admin entry point (Protected by Admin_Username & Admin_Password)
 app.get(['/admin', '/admin/', '/admin.html'], (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Direct Order Tracking deep link (e.g. /track/ORD-2026-9336)
+app.get('/track/:orderId', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
@@ -116,6 +123,20 @@ function requireAdminAuth(req, res, next) {
     return res.status(401).json({ error: 'Admin authentication required. Please sign in at /admin.' });
 }
 
+function requireApiOrAdminAuth(req, res, next) {
+    const { config } = database.getAllVariables();
+    const expectedSecret = String(config.apiSecretKey || '').trim();
+    const bearer = extractAdminToken(req);
+    const headerSecret = String(req.headers['x-api-secret'] || '').trim();
+
+    if (expectedSecret && (bearer === expectedSecret || headerSecret === expectedSecret)) {
+        req.adminUser = { username: 'api_bridge' };
+        return next();
+    }
+
+    return requireAdminAuth(req, res, next);
+}
+
 // ── RAILWAY BACKEND BRIDGE HELPER ────────────────────────────────────────────
 function getRailwayBridgeConfig() {
     const { config } = database.getAllVariables();
@@ -125,7 +146,8 @@ function getRailwayBridgeConfig() {
         headers: {
             'Content-Type': 'application/json',
             'x-admin-username': creds.username,
-            'x-admin-password': creds.password
+            'x-admin-password': creds.password,
+            ...(config.apiSecretKey ? { 'x-api-secret': config.apiSecretKey } : {})
         }
     };
 }
@@ -235,10 +257,20 @@ app.get('/api/products', (req, res) => {
         maxPrice: req.query.maxPrice,
         minDiscount: req.query.minDiscount,
         minRating: req.query.minRating,
-        search: req.query.search,
+        search: req.query.search || req.query.q,
         sort: req.query.sort
     });
     res.json({ products });
+});
+
+app.get('/api/products/search', (req, res) => {
+    const query = String(req.query.q || req.query.search || '').trim();
+    const products = database.getProducts({
+        search: query,
+        category: req.query.category,
+        sort: req.query.sort || 'newest'
+    });
+    res.json({ query, products });
 });
 
 app.get('/api/products/:slug', (req, res) => {
@@ -373,12 +405,122 @@ app.post('/api/orders/checkout', async (req, res) => {
     }
 });
 
-app.get('/api/orders/track/:orderId', (req, res) => {
+app.get(['/api/orders/track/:orderId', '/api/orders/:orderId'], (req, res) => {
     const order = database.getOrderById(req.params.orderId);
     if (!order) {
         return res.status(404).json({ error: 'Order not found. Please enter your Order ID (e.g. ORD-2026-9336 or 9336).' });
     }
     res.json({ order });
+});
+
+app.post('/api/orders', requireApiOrAdminAuth, (req, res) => {
+    try {
+        const body = req.body || {};
+        const phoneRaw = body.customerPhone || body.whatsappNumber || '';
+        const phoneCheck = normalizePakistanWhatsApp(phoneRaw);
+        if (!phoneCheck.valid) {
+            return res.status(400).json({ error: phoneCheck.error });
+        }
+
+        const customerName = String(body.customerName || 'WhatsApp Customer').trim();
+        const shippingAddress = String(body.shippingAddress || body.address || '').trim();
+        if (shippingAddress.length < 3) {
+            return res.status(400).json({ error: 'Delivery address is required.' });
+        }
+        const city = String(body.city || 'Hasilpur').trim() || 'Hasilpur';
+
+        const rawItems = Array.isArray(body.items) && body.items.length > 0
+            ? body.items
+            : (body.productId ? [{ productId: body.productId, variant: body.variant || '', quantity: body.quantity || 1 }] : []);
+
+        if (rawItems.length === 0) {
+            return res.status(400).json({ error: 'At least one item or productId is required.' });
+        }
+
+        const hydratedItems = rawItems.map((item) => {
+            const dbProd = item.productId ? database.getProductBySlugOrId(item.productId) : null;
+            if (!dbProd) {
+                throw new Error(`Product "${item.productId || item.title}" not found.`);
+            }
+            const resolved = resolveProductVariantPrice(dbProd, item.variant);
+            const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+            return {
+                productId: dbProd.id,
+                title: dbProd.title,
+                sku: dbProd.sku,
+                variant: resolved.variant || dbProd.variants?.[0] || '',
+                quantity: qty,
+                originalPrice: resolved.originalPrice,
+                discountPrice: resolved.discountPrice,
+                image: dbProd.images?.[0] || ''
+            };
+        });
+
+        const { config } = database.getAllVariables();
+        const totals = calculateOrderTotals(hydratedItems, config, city, body.deliverySpeed || 'standard');
+
+        let orderId = generateOrderId();
+        while (database.getOrderById(orderId)) {
+            orderId = generateOrderId(new Date(), Math.floor(1000 + Math.random() * 9000));
+        }
+
+        const order = database.createOrder({
+            orderId,
+            customerName,
+            whatsappNumber: phoneCheck.e164,
+            whatsappDigits: phoneCheck.digits,
+            shippingAddress,
+            city,
+            nearestLandmark: String(body.nearestLandmark || '').trim(),
+            orderNotes: String(body.orderNotes || (body.source ? `Source: ${body.source}` : '')).trim(),
+            items: totals.items,
+            subtotal: totals.subtotal,
+            discountTotal: totals.discountTotal,
+            codDeliveryCharges: totals.codDeliveryCharges,
+            grandTotal: totals.grandTotal,
+            paymentMethod: String(body.paymentMethod || 'Cash on Delivery (COD)'),
+            orderStatus: 'Pending WhatsApp Confirmation',
+            whatsappDispatchMode: body.source === 'WHATSAPP_BOT' ? 'whatsapp_in_chat' : 'baileys'
+        });
+
+        res.status(201).json({ success: true, order });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+app.patch('/api/orders/:orderId/status', requireApiOrAdminAuth, (req, res) => {
+    try {
+        const rawStatus = req.body?.status;
+        if (!ALLOWED_ORDER_STATUSES.includes(rawStatus)) {
+            return res.status(400).json({ error: 'Invalid order status.' });
+        }
+        const normalized = normalizeOrderStatus(rawStatus);
+        const order = database.updateOrderStatus(req.params.orderId, normalized);
+        if (!order) {
+            return res.status(404).json({ error: 'Order not found.' });
+        }
+        res.json({ success: true, order });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+app.post('/webhook/new-website-order', requireApiOrAdminAuth, async (req, res) => {
+    try {
+        const body = req.body || {};
+        let order = body.orderId ? database.getOrderById(body.orderId) : null;
+        if (!order && body.order && body.order.orderId) {
+            order = database.getOrderById(body.order.orderId) || body.order;
+        }
+        if (!order) {
+            return res.status(404).json({ error: 'Order not found for webhook notification.' });
+        }
+        const dispatch = await whatsappService.sendOrderConfirmationPrompt(order);
+        res.json({ success: true, orderId: order.orderId, dispatch });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ── WHATSAPP INTERACTIVE REPLY WEBHOOK & RAILWAY SYNC ────────────────────────
@@ -408,7 +550,7 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
     }
 });
 
-app.post('/api/bridge/inquiry', requireAdminAuth, (req, res) => {
+app.post('/api/bridge/inquiry', requireApiOrAdminAuth, (req, res) => {
     try {
         const { senderJid, senderNumber, senderName, description, adminNumber } = req.body || {};
         if (!senderNumber || !description) {
@@ -603,7 +745,8 @@ app.patch('/api/admin/orders/:orderId/status', requireAdminAuth, (req, res) => {
         if (!ALLOWED_ORDER_STATUSES.includes(status)) {
             return res.status(400).json({ error: 'Invalid order status.' });
         }
-        const order = database.updateOrderStatus(req.params.orderId, status);
+        const normalized = normalizeOrderStatus(status);
+        const order = database.updateOrderStatus(req.params.orderId, normalized);
         if (!order) return res.status(404).json({ error: 'Order not found.' });
         res.json({ success: true, order });
     } catch (err) {
@@ -651,6 +794,12 @@ app.post('/api/admin/variables', requireAdminAuth, async (req, res) => {
                 process.env.Cloudinary_URI = val.trim();
             } else if (k === 'Railway_URL') {
                 process.env.Railway_URL = val.trim();
+            } else if (k === 'STORE_PUBLIC_URL') {
+                process.env.STORE_URL = val.trim();
+            } else if (k === 'API_SECRET_KEY') {
+                process.env.API_SECRET_KEY = val.trim();
+            } else if (k === 'STORE_PAYMENT_INFO') {
+                process.env.STORE_PAYMENT_INFO = val.trim();
             }
         };
 

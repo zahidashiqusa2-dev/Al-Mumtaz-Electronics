@@ -131,9 +131,9 @@
         state.quickTab = tabName;
         document.querySelectorAll('.quick-tab-btn').forEach((btn) => {
             const isActive = btn.dataset.quickTab === tabName;
-            btn.classList.toggle('bg-slate-950', isActive);
+            btn.classList.toggle('bg-[#11151C]', isActive);
             btn.classList.toggle('text-white', isActive);
-            btn.classList.toggle('border-slate-950', isActive);
+            btn.classList.toggle('border-[#11151C]', isActive);
             btn.classList.toggle('bg-white', !isActive);
             btn.classList.toggle('text-slate-800', !isActive);
             btn.classList.toggle('border-slate-200', !isActive);
@@ -255,7 +255,7 @@
         const hasDistinctPrices = hasMultiVariants && new Set(p.variantOptions.map((v) => v.discountPrice)).size > 1;
 
         return `
-            <article class="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col hover:border-slate-300 hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <article class="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col hover:border-slate-300 hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
                 <div class="relative aspect-[4/3] bg-[#F4F4F5] overflow-hidden cursor-pointer pdp-trigger" data-product-id="${p.id}">
                     <img src="${imgUrl}" alt="${escapeHtml(p.title)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover hover:scale-[1.03] transition-transform duration-300" />
                     ${activeVariant.discountPercentage > 0 ? `<span data-card-badge="${p.id}" class="absolute top-2.5 left-2.5 bg-brand-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-md tabular-nums">-${activeVariant.discountPercentage}% OFF</span>` : ''}
@@ -1240,10 +1240,19 @@
         startCountdown();
         loadBootstrap().catch((err) => showToast(err.message, true));
 
+        const trackMatch = window.location.pathname.match(/^\/track\/([A-Za-z0-9_-]+)/i);
         const params = new URLSearchParams(window.location.search);
         const tab = params.get('tab');
-        if (tab === 'track' || tab === 'checkout') {
-            switchView(tab);
+        const urlOrderId = trackMatch ? decodeURIComponent(trackMatch[1]) : (params.get('orderId') || '');
+        if (trackMatch || tab === 'track') {
+            switchView('track');
+            if (urlOrderId) {
+                const trackInp = document.getElementById('track-order-input');
+                if (trackInp) trackInp.value = urlOrderId;
+                lookupTrackingOrder(urlOrderId);
+            }
+        } else if (tab === 'checkout') {
+            switchView('checkout');
         }
 
         // Silent background keep-alive ping to prevent bot & backend sleep
