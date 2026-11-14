@@ -12,6 +12,7 @@
         cart: JSON.parse(localStorage.getItem('almumtaz_cart') || '[]'),
         wishlist: JSON.parse(localStorage.getItem('almumtaz_wishlist') || '[]'),
         wishlistOnly: false,
+        quickTab: 'all',
         filters: {
             category: 'all',
             search: '',
@@ -25,17 +26,74 @@
         lastOrder: null,
         pdpProduct: null,
         pdpSelectedVariant: '',
-        pdpActiveImageIdx: 0
+        pdpActiveImageIdx: 0,
+        cardVariantMap: {}
     };
+
+    async function copyTextToClipboard(text) {
+        const clean = String(text || '').trim();
+        if (!clean) return false;
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(clean);
+                return true;
+            } catch (_) {}
+        }
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = clean;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            return true;
+        } catch (_) {
+            return true;
+        }
+    }
+
+    function resolveVariantOption(product, requestedVariant = '') {
+        if (!product) {
+            return { name: '', originalPrice: 0, discountPrice: 0, discountPercentage: 0, stock: 0 };
+        }
+        const opts = Array.isArray(product.variantOptions) ? product.variantOptions : [];
+        const target = String(requestedVariant || '').trim();
+        let matched = null;
+        if (target && opts.length > 0) {
+            matched = opts.find((v) => String(v.name || '').trim().toLowerCase() === target.toLowerCase()) || null;
+        }
+        if (!matched && opts.length > 0) {
+            matched = opts[0];
+        }
+        if (matched) {
+            return {
+                name: matched.name,
+                originalPrice: Number(matched.originalPrice) || Number(product.originalPrice) || 0,
+                discountPrice: Number(matched.discountPrice) || Number(product.discountPrice) || 0,
+                discountPercentage: Number(matched.discountPercentage ?? product.discountPercentage) || 0,
+                stock: matched.stock !== undefined ? Number(matched.stock) : Number(product.stock || 0)
+            };
+        }
+        return {
+            name: target || (product.variants && product.variants[0]) || '',
+            originalPrice: Number(product.originalPrice) || 0,
+            discountPrice: Number(product.discountPrice) || 0,
+            discountPercentage: Number(product.discountPercentage) || 0,
+            stock: Number(product.stock || 0)
+        };
+    }
 
     function showToast(msg, isError = false) {
         const el = document.getElementById('toast-banner');
         if (!el) return;
         el.textContent = msg;
-        el.className = `fixed bottom-5 right-5 z-50 max-w-sm px-4 py-3 rounded shadow-xl text-sm font-medium border ${
+        el.className = `fixed bottom-5 right-5 z-50 max-w-sm px-4 py-3 rounded-xl shadow-xl text-sm font-medium border ${
             isError
                 ? 'bg-red-700 text-white border-red-800'
-                : 'bg-gray-900 text-white border-gray-700'
+                : 'bg-slate-900 text-white border-slate-700'
         }`;
         el.classList.remove('hidden');
         clearTimeout(el._timer);
@@ -50,14 +108,36 @@
     function saveWishlist() {
         localStorage.setItem('almumtaz_wishlist', JSON.stringify(state.wishlist));
         const badge = document.getElementById('wishlist-count');
-        if (badge) badge.textContent = String(state.wishlist.length);
+        if (badge) {
+            const count = state.wishlist.length;
+            badge.textContent = String(count);
+            badge.classList.toggle('hidden', count <= 0);
+            badge.classList.toggle('flex', count > 0);
+        }
     }
 
     function updateCartBadges() {
         const count = state.cart.reduce((acc, item) => acc + (item.quantity || 1), 0);
         const badge = document.getElementById('cart-badge-count');
-        if (badge) badge.textContent = String(count);
+        if (badge) {
+            badge.textContent = String(count);
+            badge.classList.toggle('hidden', count <= 0);
+            badge.classList.toggle('flex', count > 0);
+        }
         renderCartDrawer();
+    }
+
+    function setActiveQuickTab(tabName) {
+        state.quickTab = tabName;
+        document.querySelectorAll('.quick-tab-btn').forEach((btn) => {
+            const isActive = btn.dataset.quickTab === tabName;
+            btn.classList.toggle('bg-slate-950', isActive);
+            btn.classList.toggle('text-white', isActive);
+            btn.classList.toggle('border-slate-950', isActive);
+            btn.classList.toggle('bg-white', !isActive);
+            btn.classList.toggle('text-slate-800', !isActive);
+            btn.classList.toggle('border-slate-200', !isActive);
+        });
     }
 
     function switchView(viewName) {
@@ -69,8 +149,14 @@
         document.querySelectorAll('.nav-link').forEach((btn) => {
             const active = btn.dataset.nav === viewName;
             btn.classList.toggle('text-brand-500', active);
-            btn.classList.toggle('text-gray-700', !active);
+            btn.classList.toggle('text-slate-700', !active);
         });
+
+        if (viewName === 'track') {
+            setActiveQuickTab('track');
+        } else if (viewName === 'store' && state.quickTab === 'track') {
+            setActiveQuickTab('all');
+        }
 
         window.scrollTo({ top: 0, behavior: 'smooth' });
         if (viewName === 'checkout') {
@@ -80,12 +166,15 @@
 
     function addToCart(product, qty = 1, variant = '') {
         if (!product) return;
-        const chosenVariant = variant || (product.variants && product.variants[0]) || '';
+        const resolved = resolveVariantOption(product, variant || state.cardVariantMap[product.id] || '');
+        const chosenVariant = resolved.name || (product.variants && product.variants[0]) || '';
         const existing = state.cart.find(
             (i) => i.productId === product.id && i.variant === chosenVariant
         );
         if (existing) {
             existing.quantity += qty;
+            existing.originalPrice = resolved.originalPrice;
+            existing.discountPrice = resolved.discountPrice;
         } else {
             state.cart.push({
                 productId: product.id,
@@ -93,13 +182,13 @@
                 sku: product.sku,
                 variant: chosenVariant,
                 quantity: qty,
-                originalPrice: product.originalPrice,
-                discountPrice: product.discountPrice,
+                originalPrice: resolved.originalPrice,
+                discountPrice: resolved.discountPrice,
                 image: product.images?.[0] || '/images/product_qled_tv.jpg'
             });
         }
         saveCart();
-        showToast(`Added "${product.title}" to cart`);
+        showToast(`Added "${product.title}"${chosenVariant ? ` (${chosenVariant})` : ''}`);
     }
 
     function toggleWishlist(productId) {
@@ -109,7 +198,7 @@
             showToast('Removed from Saved list');
         } else {
             state.wishlist.push(productId);
-            showToast('Saved to your Wishlist');
+            showToast('Saved to Wishlist');
         }
         saveWishlist();
         renderFlashDeals();
@@ -131,14 +220,14 @@
                 <button
                     type="button"
                     data-cat-slug="${escapeHtml(cat.slug)}"
-                    class="cat-card text-left bg-white border ${active ? 'border-brand-500 ring-1 ring-brand-500' : 'border-gray-200 hover:border-gray-400'} rounded overflow-hidden transition-colors flex flex-col"
+                    class="cat-card group text-left bg-white border ${active ? 'border-brand-500 ring-2 ring-brand-500/20' : 'border-slate-200 hover:border-slate-400'} rounded-xl overflow-hidden transition-all flex flex-col"
                 >
-                    <div class="aspect-[4/3] bg-gray-100 overflow-hidden w-full">
-                        <img src="${escapeHtml(cat.image || '/images/product_qled_tv.jpg')}" alt="${escapeHtml(cat.name)}" class="w-full h-full object-cover" />
+                    <div class="aspect-[4/3] bg-[#F4F4F5] overflow-hidden w-full">
+                        <img src="${escapeHtml(cat.image || '/images/product_qled_tv.jpg')}" alt="${escapeHtml(cat.name)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-300" />
                     </div>
-                    <div class="p-3">
-                        <p class="font-display font-bold text-xs sm:text-sm text-gray-900 leading-snug">${escapeHtml(cat.name)}</p>
-                        <p class="text-[11px] text-gray-500 tabular-nums mt-0.5">${cat.productCount || 0} ${(cat.productCount || 0) === 1 ? 'product' : 'products'}</p>
+                    <div class="p-3.5">
+                        <p class="font-display font-bold text-xs sm:text-sm text-slate-900 leading-snug">${escapeHtml(cat.name)}</p>
+                        <p class="text-[11px] text-slate-500 tabular-nums mt-0.5">${cat.productCount || 0} ${(cat.productCount || 0) === 1 ? 'item' : 'items'}</p>
                     </div>
                 </button>
             `;
@@ -149,6 +238,7 @@
                 state.filters.category = btn.dataset.catSlug;
                 state.wishlistOnly = false;
                 document.getElementById('filter-category').value = state.filters.category;
+                setActiveQuickTab('categories');
                 renderCategories();
                 renderCatalog();
                 document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
@@ -159,18 +249,21 @@
     function createProductCardHtml(p) {
         const isWished = state.wishlist.includes(p.id);
         const imgUrl = escapeHtml(p.images?.[0] || '/images/product_qled_tv.jpg');
-        const outOfStock = p.stock <= 0;
+        const activeVariant = resolveVariantOption(p, state.cardVariantMap[p.id] || '');
+        const outOfStock = (activeVariant.stock ?? p.stock) <= 0;
+        const hasMultiVariants = Array.isArray(p.variantOptions) && p.variantOptions.length > 1;
+        const hasDistinctPrices = hasMultiVariants && new Set(p.variantOptions.map((v) => v.discountPrice)).size > 1;
 
         return `
-            <article class="bg-white border border-gray-200 rounded overflow-hidden flex flex-col hover:border-gray-400 transition-colors">
-                <div class="relative aspect-[4/3] bg-[#F3F4F6] overflow-hidden cursor-pointer pdp-trigger" data-product-id="${p.id}">
-                    <img src="${imgUrl}" alt="${escapeHtml(p.title)}" class="w-full h-full object-cover hover:scale-[1.03] transition-transform duration-300" />
-                    ${p.discountPercentage > 0 ? `<span class="absolute top-2.5 left-2.5 bg-brand-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-sm tabular-nums">-${p.discountPercentage}% OFF</span>` : ''}
+            <article class="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col hover:border-slate-300 hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+                <div class="relative aspect-[4/3] bg-[#F4F4F5] overflow-hidden cursor-pointer pdp-trigger" data-product-id="${p.id}">
+                    <img src="${imgUrl}" alt="${escapeHtml(p.title)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover hover:scale-[1.03] transition-transform duration-300" />
+                    ${activeVariant.discountPercentage > 0 ? `<span data-card-badge="${p.id}" class="absolute top-2.5 left-2.5 bg-brand-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-md tabular-nums">-${activeVariant.discountPercentage}% OFF</span>` : ''}
                     <button
                         type="button"
                         data-wish-id="${p.id}"
-                        aria-label="Save to wishlist"
-                        class="wish-btn absolute top-2.5 right-2.5 w-8 h-8 rounded bg-white/95 border border-gray-200 flex items-center justify-center text-gray-700 hover:text-brand-500"
+                        aria-label="Save ${escapeHtml(p.title)} to wishlist"
+                        class="wish-btn absolute top-2.5 right-2.5 w-8 h-8 rounded-lg bg-white/95 border border-slate-200 flex items-center justify-center text-slate-700 hover:text-brand-500 transition-colors"
                     >
                         <svg class="w-4 h-4 ${isWished ? 'fill-brand-500 text-brand-500' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
@@ -180,21 +273,43 @@
 
                 <div class="p-4 flex-1 flex flex-col justify-between gap-3">
                     <div class="space-y-1.5">
-                        <p class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide truncate">
+                        <p class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide truncate">
                             ${escapeHtml(p.brand)} · ${escapeHtml(p.sku)}
                         </p>
-                        <h3 class="font-display font-bold text-sm text-gray-950 leading-snug line-clamp-2 min-h-[2.5rem] cursor-pointer pdp-trigger hover:text-brand-500" data-product-id="${p.id}">
+                        <h3 class="font-display font-bold text-sm sm:text-[15px] text-slate-950 leading-snug line-clamp-2 min-h-[2.5rem] cursor-pointer pdp-trigger hover:text-brand-500 transition-colors" data-product-id="${p.id}">
                             ${escapeHtml(p.title)}
                         </h3>
-                        <p class="text-xs text-gray-500 tabular-nums">
+                        <p class="text-xs text-slate-500 tabular-nums">
                             ★ ${Number(p.rating || 4.8).toFixed(1)} (${p.reviewCount || 12}) · ${p.soldCount || 0} sold
                         </p>
+                        ${hasMultiVariants ? `
+                            <div class="flex flex-wrap gap-1 pt-1">
+                                ${p.variantOptions.map((v) => {
+                                    const selected = v.name === activeVariant.name;
+                                    return `
+                                        <button
+                                            type="button"
+                                            data-card-var-prod="${p.id}"
+                                            data-card-var-name="${escapeHtml(v.name)}"
+                                            class="card-var-btn px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors whitespace-nowrap ${
+                                                selected
+                                                    ? 'border-brand-500 bg-brand-50 text-brand-700'
+                                                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-400'
+                                            }"
+                                        >
+                                            ${escapeHtml(v.name)}
+                                        </button>
+                                    `;
+                                }).join('')}
+                            </div>
+                        ` : ''}
                     </div>
 
                     <div class="space-y-3 pt-1">
                         <div class="flex items-baseline gap-2 flex-wrap">
-                            <span class="font-display font-extrabold text-lg text-gray-950 tabular-nums">${formatPkr(p.discountPrice)}</span>
-                            ${p.discountPercentage > 0 ? `<span class="text-xs text-gray-400 line-through tabular-nums">${formatPkr(p.originalPrice)}</span>` : ''}
+                            <span data-card-price="${p.id}" class="font-display font-extrabold text-lg text-slate-950 tabular-nums">${formatPkr(activeVariant.discountPrice)}</span>
+                            ${activeVariant.discountPercentage > 0 ? `<span data-card-orig="${p.id}" class="text-xs text-slate-400 line-through tabular-nums">${formatPkr(activeVariant.originalPrice)}</span>` : `<span data-card-orig="${p.id}" class="hidden"></span>`}
+                            ${hasDistinctPrices ? '<span class="text-[11px] text-slate-500 font-medium">· variant price</span>' : ''}
                         </div>
 
                         <div class="grid grid-cols-5 gap-2">
@@ -202,14 +317,14 @@
                                 type="button"
                                 data-add-id="${p.id}"
                                 ${outOfStock ? 'disabled' : ''}
-                                class="add-cart-btn col-span-3 h-9 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-300 text-white text-xs font-semibold rounded transition-colors"
+                                class="add-cart-btn col-span-3 h-9 bg-brand-500 hover:bg-brand-600 disabled:bg-slate-300 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
                             >
-                                ${outOfStock ? 'Out of Stock' : 'Add to Cart'}
+                                ${outOfStock ? 'Out of Stock' : 'Add to Bag'}
                             </button>
                             <button
                                 type="button"
                                 data-product-id="${p.id}"
-                                class="pdp-trigger col-span-2 h-9 border border-gray-300 hover:bg-gray-50 text-gray-800 text-xs font-semibold rounded"
+                                class="pdp-trigger col-span-2 h-9 border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
                             >
                                 Details
                             </button>
@@ -222,12 +337,54 @@
 
     function bindProductCardEvents(container) {
         if (!container) return;
+        container.querySelectorAll('.card-var-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const pid = Number(btn.dataset.cardVarProd);
+                const vName = btn.dataset.cardVarName;
+                const prod = state.products.find((p) => p.id === pid);
+                if (!prod) return;
+                state.cardVariantMap[pid] = vName;
+                const resolved = resolveVariantOption(prod, vName);
+
+                container.querySelectorAll(`.card-var-btn[data-card-var-prod="${pid}"]`).forEach((b) => {
+                    const active = b.dataset.cardVarName === vName;
+                    b.classList.toggle('border-brand-500', active);
+                    b.classList.toggle('bg-brand-50', active);
+                    b.classList.toggle('text-brand-700', active);
+                    b.classList.toggle('border-slate-200', !active);
+                    b.classList.toggle('bg-slate-50', !active);
+                    b.classList.toggle('text-slate-700', !active);
+                });
+
+                container.querySelectorAll(`[data-card-price="${pid}"]`).forEach((el) => {
+                    el.textContent = formatPkr(resolved.discountPrice);
+                });
+                container.querySelectorAll(`[data-card-orig="${pid}"]`).forEach((el) => {
+                    if (resolved.discountPercentage > 0) {
+                        el.textContent = formatPkr(resolved.originalPrice);
+                        el.classList.remove('hidden');
+                    } else {
+                        el.classList.add('hidden');
+                    }
+                });
+                container.querySelectorAll(`[data-card-badge="${pid}"]`).forEach((el) => {
+                    if (resolved.discountPercentage > 0) {
+                        el.textContent = `-${resolved.discountPercentage}% OFF`;
+                        el.classList.remove('hidden');
+                    } else {
+                        el.classList.add('hidden');
+                    }
+                });
+            });
+        });
+
         container.querySelectorAll('.add-cart-btn').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const id = Number(btn.dataset.addId);
                 const prod = state.products.find((p) => p.id === id);
-                addToCart(prod, 1);
+                addToCart(prod, 1, state.cardVariantMap[id] || '');
             });
         });
 
@@ -281,7 +438,7 @@
             list = list.filter((p) => p.discountPercentage >= minD);
         }
         if (state.filters.tag) {
-            list = list.filter((p) => p.tags.includes(state.filters.tag));
+            list = list.filter((p) => (p.tags || []).includes(state.filters.tag));
         }
         if (state.filters.inStock) {
             list = list.filter((p) => p.stock > 0);
@@ -316,6 +473,12 @@
         const filtered = getFilteredProducts();
         if (state.wishlistOnly) {
             heading.textContent = 'Saved Wishlist Items';
+        } else if (state.filters.minDiscount === '1') {
+            heading.textContent = 'Sale Items & Special Offers';
+        } else if (state.filters.tag === 'Featured') {
+            heading.textContent = 'Featured Electronics';
+        } else if (state.filters.tag === 'Free Delivery') {
+            heading.textContent = 'Free Delivery Electronics';
         } else if (state.filters.category !== 'all') {
             const cat = state.categories.find((c) => c.slug === state.filters.category);
             heading.textContent = cat ? cat.name : 'Selected Category';
@@ -327,9 +490,9 @@
 
         if (filtered.length === 0) {
             grid.innerHTML = `
-                <div class="col-span-full bg-white border border-gray-200 rounded p-10 text-center space-y-3">
-                    <p class="font-display font-bold text-gray-900">No products match your current filters.</p>
-                    <button id="empty-reset-btn" type="button" class="h-9 px-4 bg-brand-500 text-white text-xs font-semibold rounded">Reset All Filters</button>
+                <div class="col-span-full bg-white border border-slate-200 rounded-2xl p-10 text-center space-y-3">
+                    <p class="font-display font-bold text-slate-900">No products match your current filters.</p>
+                    <button id="empty-reset-btn" type="button" class="h-9 px-4 bg-brand-500 text-white text-xs font-semibold rounded-lg">Reset All Filters</button>
                 </div>
             `;
             document.getElementById('empty-reset-btn')?.addEventListener('click', resetFilters);
@@ -342,26 +505,37 @@
 
     function openProductDetailModal(product) {
         state.pdpProduct = product;
-        state.pdpSelectedVariant = product.variants?.[0] || 'Standard';
+        const initialVariant = state.cardVariantMap[product.id] || product.variants?.[0] || 'Standard';
+        let activeVariant = resolveVariantOption(product, initialVariant);
+        state.pdpSelectedVariant = activeVariant.name || initialVariant;
         state.pdpActiveImageIdx = 0;
 
         const modal = document.getElementById('pdp-modal');
         const body = document.getElementById('pdp-modal-body');
         const images = product.images?.length ? product.images : ['/images/product_qled_tv.jpg'];
         const cityRates = state.store.cityRates || { Hasilpur: 0, Lahore: 350, Karachi: 450 };
+        const variantList = Array.isArray(product.variantOptions) && product.variantOptions.length
+            ? product.variantOptions
+            : (product.variants || []).map((v) => ({
+                name: v,
+                originalPrice: product.originalPrice,
+                discountPrice: product.discountPrice,
+                discountPercentage: product.discountPercentage,
+                stock: product.stock
+            }));
 
         body.innerHTML = `
             <div class="grid grid-cols-1 md:grid-cols-12 gap-8">
                 <div class="md:col-span-6 space-y-3">
-                    <div id="pdp-zoom-frame" class="relative aspect-[4/3] bg-[#F3F4F6] border border-gray-200 rounded overflow-hidden cursor-zoom-in">
-                        <img id="pdp-main-img" src="${escapeHtml(images[0])}" alt="${escapeHtml(product.title)}" class="w-full h-full object-cover transition-transform duration-300" />
-                        ${product.discountPercentage > 0 ? `<span class="absolute top-3 left-3 bg-brand-500 text-white text-xs font-bold px-2.5 py-1 rounded-sm tabular-nums">-${product.discountPercentage}% OFF</span>` : ''}
+                    <div id="pdp-zoom-frame" class="relative aspect-[4/3] bg-[#F4F4F5] border border-slate-200 rounded-xl overflow-hidden cursor-zoom-in">
+                        <img id="pdp-main-img" src="${escapeHtml(images[0])}" alt="${escapeHtml(product.title)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover transition-transform duration-300" />
+                        <span id="pdp-discount-badge" class="${activeVariant.discountPercentage > 0 ? '' : 'hidden '}absolute top-3 left-3 bg-brand-500 text-white text-xs font-bold px-2.5 py-1 rounded-md tabular-nums">-${activeVariant.discountPercentage}% OFF</span>
                     </div>
                     ${images.length > 1 ? `
                         <div class="flex gap-2.5">
                             ${images.map((img, i) => `
-                                <button type="button" data-img-idx="${i}" class="pdp-thumb w-16 h-14 border ${i === 0 ? 'border-brand-500' : 'border-gray-200'} rounded overflow-hidden bg-gray-100">
-                                    <img src="${escapeHtml(img)}" alt="Thumbnail ${i + 1}" class="w-full h-full object-cover" />
+                                <button type="button" data-img-idx="${i}" class="pdp-thumb w-16 h-14 border ${i === 0 ? 'border-brand-500' : 'border-slate-200'} rounded-lg overflow-hidden bg-slate-100">
+                                    <img src="${escapeHtml(img)}" alt="Thumbnail ${i + 1}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-full h-full object-cover" />
                                 </button>
                             `).join('')}
                         </div>
@@ -370,56 +544,60 @@
 
                 <div class="md:col-span-6 space-y-4">
                     <div class="space-y-1">
-                        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                             ${escapeHtml(product.shopName)} · SKU: ${escapeHtml(product.sku)}
                         </p>
-                        <h2 class="font-display text-2xl font-bold text-gray-950 leading-tight">${escapeHtml(product.title)}</h2>
-                        <p class="text-xs text-gray-600 tabular-nums">
+                        <h2 class="font-display text-2xl font-bold text-slate-950 leading-tight">${escapeHtml(product.title)}</h2>
+                        <p class="text-xs text-slate-600 tabular-nums">
                             ★ ${Number(product.rating || 4.8).toFixed(1)} (${product.reviewCount || 12} Verified Reviews) · ${product.soldCount || 0} units sold
                         </p>
                     </div>
 
-                    <div class="p-4 bg-gray-50 border border-gray-200 rounded space-y-1">
+                    <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
                         <div class="flex items-baseline gap-3">
-                            <span class="font-display text-2xl font-extrabold text-brand-500 tabular-nums">${formatPkr(product.discountPrice)}</span>
-                            ${product.discountPercentage > 0 ? `<span class="text-sm text-gray-400 line-through tabular-nums">${formatPkr(product.originalPrice)}</span>` : ''}
+                            <span id="pdp-sale-price" class="font-display text-2xl font-extrabold text-brand-500 tabular-nums">${formatPkr(activeVariant.discountPrice)}</span>
+                            <span id="pdp-original-price" class="${activeVariant.discountPercentage > 0 ? '' : 'hidden '}text-sm text-slate-400 line-through tabular-nums">${formatPkr(activeVariant.originalPrice)}</span>
                         </div>
-                        <p class="text-xs font-medium text-emerald-700">
-                            Cash on Delivery Available · ${product.stock > 0 ? `${product.stock} units in stock` : 'Currently out of stock'}
+                        <p id="pdp-stock-line" class="text-xs font-medium text-emerald-700">
+                            Cash on Delivery Available · ${(activeVariant.stock ?? product.stock) > 0 ? `${activeVariant.stock ?? product.stock} units in stock` : 'Currently out of stock'}
                         </p>
                     </div>
 
-                    <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(product.description)}</p>
+                    <p class="text-sm text-slate-700 leading-relaxed">${escapeHtml(product.description)}</p>
 
-                    ${product.variants?.length ? `
+                    ${variantList.length ? `
                         <div>
-                            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Select Variant</p>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Select Variant &amp; Price</p>
                             <div class="flex flex-wrap gap-2">
-                                ${product.variants.map((v, idx) => `
-                                    <button type="button" data-variant="${escapeHtml(v)}" class="pdp-variant-btn h-8 px-3 text-xs font-semibold rounded border ${idx === 0 ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}">
-                                        ${escapeHtml(v)}
-                                    </button>
-                                `).join('')}
+                                ${variantList.map((v) => {
+                                    const isSelected = v.name === state.pdpSelectedVariant;
+                                    return `
+                                        <button type="button" data-variant="${escapeHtml(v.name)}" class="pdp-variant-btn px-3 py-1.5 text-xs font-semibold rounded-lg border ${isSelected ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}">
+                                            <span>${escapeHtml(v.name)}</span>
+                                            <span class="ml-1.5 font-mono text-[11px] opacity-80">${formatPkr(v.discountPrice)}</span>
+                                        </button>
+                                    `;
+                                }).join('')}
                             </div>
                         </div>
                     ` : ''}
 
-                    <div class="border border-gray-200 rounded p-3.5 space-y-2">
+                    <div class="border border-slate-200 rounded-xl p-3.5 space-y-2">
                         <div class="flex items-center justify-between gap-2">
-                            <label for="pdp-city-est" class="text-xs font-semibold text-gray-600">COD Delivery Estimator</label>
-                            <select id="pdp-city-est" class="h-8 px-2 border border-gray-300 rounded text-xs bg-white">
+                            <label for="pdp-city-est" class="text-xs font-semibold text-slate-600">COD Delivery Estimator</label>
+                            <select id="pdp-city-est" class="h-8 px-2 border border-slate-300 rounded-lg text-xs bg-white">
                                 ${Object.keys(cityRates).map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
                             </select>
                         </div>
-                        <p id="pdp-delivery-fee-note" class="text-xs text-gray-700 font-medium"></p>
-                        <p class="text-[11px] text-gray-500">Warranty: ${escapeHtml(product.warranty || 'Official Brand Warranty')}</p>
+                        <p id="pdp-delivery-fee-note" class="text-xs text-slate-700 font-medium"></p>
+                        <p class="text-[11px] text-slate-500">Warranty: ${escapeHtml(product.warranty || 'Official Brand Warranty')}</p>
                     </div>
 
                     <div class="grid grid-cols-2 gap-3 pt-2">
-                        <button id="pdp-add-cart-btn" type="button" ${product.stock <= 0 ? 'disabled' : ''} class="h-11 bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 text-white text-sm font-semibold rounded">
-                            Add to Cart
+                        <button id="pdp-add-cart-btn" type="button" ${(activeVariant.stock ?? product.stock) <= 0 ? 'disabled' : ''} class="h-11 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-semibold rounded-xl">
+                            Add to Bag
                         </button>
-                        <button id="pdp-buy-now-btn" type="button" ${product.stock <= 0 ? 'disabled' : ''} class="h-11 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-300 text-white text-sm font-semibold rounded">
+                        <button id="pdp-buy-now-btn" type="button" ${(activeVariant.stock ?? product.stock) <= 0 ? 'disabled' : ''} class="h-11 bg-brand-500 hover:bg-brand-600 disabled:bg-slate-300 text-white text-sm font-semibold rounded-xl">
                             Buy Now (COD)
                         </button>
                     </div>
@@ -433,7 +611,7 @@
             if (!citySel || !note) return;
             const city = citySel.value;
             const threshold = Number(state.store.freeDeliveryThreshold || 35000);
-            if (product.discountPrice >= threshold) {
+            if (activeVariant.discountPrice >= threshold) {
                 note.textContent = `Free COD Delivery to ${city} (order exceeds ${formatPkr(threshold)})`;
             } else {
                 const rate = cityRates[city] ?? state.store.codFlatRate ?? 250;
@@ -445,7 +623,6 @@
         updateFeeNote();
         document.getElementById('pdp-city-est')?.addEventListener('change', updateFeeNote);
 
-        // Zoom toggle
         const zoomFrame = document.getElementById('pdp-zoom-frame');
         const mainImg = document.getElementById('pdp-main-img');
         let zoomed = false;
@@ -462,7 +639,7 @@
                 mainImg.src = images[idx];
                 body.querySelectorAll('.pdp-thumb').forEach((t, ti) => {
                     t.classList.toggle('border-brand-500', ti === idx);
-                    t.classList.toggle('border-gray-200', ti !== idx);
+                    t.classList.toggle('border-slate-200', ti !== idx);
                 });
             });
         });
@@ -470,13 +647,40 @@
         body.querySelectorAll('.pdp-variant-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 state.pdpSelectedVariant = btn.dataset.variant;
+                state.cardVariantMap[product.id] = state.pdpSelectedVariant;
+                activeVariant = resolveVariantOption(product, state.pdpSelectedVariant);
+
                 body.querySelectorAll('.pdp-variant-btn').forEach((b) => {
                     const active = b === btn;
                     b.classList.toggle('border-brand-500', active);
                     b.classList.toggle('bg-brand-50', active);
                     b.classList.toggle('text-brand-700', active);
-                    b.classList.toggle('border-gray-300', !active);
+                    b.classList.toggle('border-slate-300', !active);
                 });
+
+                const saleEl = document.getElementById('pdp-sale-price');
+                const origEl = document.getElementById('pdp-original-price');
+                const badgeEl = document.getElementById('pdp-discount-badge');
+                const stockEl = document.getElementById('pdp-stock-line');
+                const addBtn = document.getElementById('pdp-add-cart-btn');
+                const buyBtn = document.getElementById('pdp-buy-now-btn');
+
+                if (saleEl) saleEl.textContent = formatPkr(activeVariant.discountPrice);
+                if (origEl) {
+                    origEl.textContent = formatPkr(activeVariant.originalPrice);
+                    origEl.classList.toggle('hidden', activeVariant.discountPercentage <= 0);
+                }
+                if (badgeEl) {
+                    badgeEl.textContent = `-${activeVariant.discountPercentage}% OFF`;
+                    badgeEl.classList.toggle('hidden', activeVariant.discountPercentage <= 0);
+                }
+                const vStock = activeVariant.stock ?? product.stock;
+                if (stockEl) {
+                    stockEl.textContent = `Cash on Delivery Available · ${vStock > 0 ? `${vStock} units in stock` : 'Currently out of stock'}`;
+                }
+                if (addBtn) addBtn.disabled = vStock <= 0;
+                if (buyBtn) buyBtn.disabled = vStock <= 0;
+                updateFeeNote();
             });
         });
 
@@ -502,8 +706,8 @@
         if (state.cart.length === 0) {
             container.innerHTML = `
                 <div class="text-center py-12 space-y-3">
-                    <p class="text-sm font-medium text-gray-600">Your shopping cart is empty.</p>
-                    <p class="text-xs text-gray-400">Browse electronics and tap "Add to Cart".</p>
+                    <p class="text-sm font-medium text-slate-600">Your order bag is empty.</p>
+                    <p class="text-xs text-slate-400">Browse electronics and tap "Add to Bag".</p>
                 </div>
             `;
             subEl.textContent = 'Rs. 0';
@@ -515,17 +719,17 @@
             const line = (item.discountPrice || 0) * (item.quantity || 1);
             subtotal += line;
             return `
-                <div class="flex gap-3 border border-gray-200 rounded p-3 bg-white">
-                    <img src="${escapeHtml(item.image || '/images/product_qled_tv.jpg')}" alt="${escapeHtml(item.title)}" class="w-16 h-16 object-cover rounded bg-gray-100 shrink-0" />
+                <div class="flex gap-3 border border-slate-200 rounded-xl p-3 bg-white">
+                    <img src="${escapeHtml(item.image || '/images/product_qled_tv.jpg')}" alt="${escapeHtml(item.title)}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-16 h-16 object-cover rounded-lg bg-slate-100 shrink-0" />
                     <div class="flex-1 min-w-0 space-y-1">
-                        <p class="text-xs font-bold text-gray-900 line-clamp-2">${escapeHtml(item.title)}</p>
-                        ${item.variant ? `<p class="text-[11px] text-gray-500">${escapeHtml(item.variant)}</p>` : ''}
+                        <p class="text-xs font-bold text-slate-900 line-clamp-2">${escapeHtml(item.title)}</p>
+                        ${item.variant ? `<p class="text-[11px] text-slate-500">${escapeHtml(item.variant)}</p>` : ''}
                         <p class="text-xs font-bold text-brand-500 tabular-nums">${formatPkr(line)}</p>
                         <div class="flex items-center justify-between pt-1">
-                            <div class="flex items-center border border-gray-300 rounded">
-                                <button type="button" data-qty-idx="${idx}" data-delta="-1" class="cart-qty-btn w-6 h-6 text-xs font-bold hover:bg-gray-100">−</button>
+                            <div class="flex items-center border border-slate-300 rounded-lg">
+                                <button type="button" data-qty-idx="${idx}" data-delta="-1" aria-label="Decrease quantity" class="cart-qty-btn w-6 h-6 text-xs font-bold hover:bg-slate-100">−</button>
                                 <span class="px-2.5 text-xs font-semibold tabular-nums">${item.quantity}</span>
-                                <button type="button" data-qty-idx="${idx}" data-delta="1" class="cart-qty-btn w-6 h-6 text-xs font-bold hover:bg-gray-100">+</button>
+                                <button type="button" data-qty-idx="${idx}" data-delta="1" aria-label="Increase quantity" class="cart-qty-btn w-6 h-6 text-xs font-bold hover:bg-slate-100">+</button>
                             </div>
                             <button type="button" data-remove-idx="${idx}" class="cart-remove-btn text-[11px] font-semibold text-red-600 hover:underline">Remove</button>
                         </div>
@@ -559,19 +763,10 @@
 
     async function refreshCheckoutSummary() {
         const listEl = document.getElementById('checkout-items-list');
-        const formContainer = document.getElementById('checkout-form-container');
-        const successPanel = document.getElementById('checkout-success-panel');
         if (!listEl) return;
 
-        if (state.cart.length === 0 && state.lastOrder && !successPanel.classList.contains('hidden')) {
-            return;
-        }
-
-        formContainer.classList.remove('hidden');
-        successPanel.classList.add('hidden');
-
         if (state.cart.length === 0) {
-            listEl.innerHTML = '<p class="text-sm text-gray-500">Your cart is empty. Add an item before checking out.</p>';
+            listEl.innerHTML = '<p class="text-sm text-slate-500">Your order bag is empty. Add an item before checking out.</p>';
             document.getElementById('co-subtotal').textContent = 'Rs. 0';
             document.getElementById('co-discount').textContent = '-Rs. 0';
             document.getElementById('co-shipping').textContent = 'Rs. 0';
@@ -580,12 +775,12 @@
         }
 
         listEl.innerHTML = state.cart.map((item) => `
-            <div class="flex items-center justify-between gap-3 text-xs border-b border-gray-100 pb-2.5">
+            <div class="flex items-center justify-between gap-3 text-xs border-b border-slate-100 pb-2.5">
                 <div class="min-w-0">
-                    <p class="font-semibold text-gray-900 truncate">${escapeHtml(item.title)}</p>
-                    <p class="text-gray-500">${escapeHtml(item.variant || 'Standard')} × ${item.quantity}</p>
+                    <p class="font-semibold text-slate-900 truncate">${escapeHtml(item.title)}</p>
+                    <p class="text-slate-500">${escapeHtml(item.variant || 'Standard')} × ${item.quantity}</p>
                 </div>
-                <span class="tabular-nums font-bold text-gray-900 shrink-0">${formatPkr(item.discountPrice * item.quantity)}</span>
+                <span class="tabular-nums font-bold text-slate-900 shrink-0">${formatPkr(item.discountPrice * item.quantity)}</span>
             </div>
         `).join('');
 
@@ -604,7 +799,19 @@
         } catch (_) {}
     }
 
-    function resetFilters() {
+    function syncFilterInputsFromState() {
+        document.getElementById('filter-category').value = state.filters.category;
+        document.getElementById('filter-price-max').value = String(state.filters.maxPrice);
+        document.getElementById('filter-price-label').textContent =
+            state.filters.maxPrice >= 300000 ? 'Any' : formatPkr(state.filters.maxPrice);
+        document.getElementById('filter-discount').value = state.filters.minDiscount;
+        document.getElementById('filter-tag').value = state.filters.tag;
+        document.getElementById('filter-instock').checked = state.filters.inStock;
+        document.getElementById('sort-products').value = state.filters.sort;
+    }
+
+    function resetFilters(options = {}) {
+        const { keepQuickTab = false } = options;
         state.wishlistOnly = false;
         state.filters = {
             category: 'all',
@@ -615,17 +822,82 @@
             inStock: false,
             sort: 'newest'
         };
-        document.getElementById('filter-category').value = 'all';
-        document.getElementById('filter-price-max').value = '300000';
-        document.getElementById('filter-price-label').textContent = 'Any';
-        document.getElementById('filter-discount').value = '';
-        document.getElementById('filter-tag').value = '';
-        document.getElementById('filter-instock').checked = false;
-        document.getElementById('sort-products').value = 'newest';
+        syncFilterInputsFromState();
         document.getElementById('global-search-input').value = '';
         document.getElementById('mobile-search-input').value = '';
+        if (!keepQuickTab) {
+            setActiveQuickTab('all');
+        }
         renderCategories();
         renderCatalog();
+    }
+
+    function applyQuickTab(tab) {
+        if (tab === 'track') {
+            switchView('track');
+            return;
+        }
+        if (state.activeView !== 'store') {
+            switchView('store');
+        }
+
+        setActiveQuickTab(tab);
+
+        if (tab === 'all') {
+            resetFilters({ keepQuickTab: true });
+            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+        } else if (tab === 'categories') {
+            resetFilters({ keepQuickTab: true });
+            document.getElementById('categories-section')?.scrollIntoView({ behavior: 'smooth' });
+        } else if (tab === 'sale') {
+            resetFilters({ keepQuickTab: true });
+            state.filters.minDiscount = '1';
+            state.filters.sort = 'discount';
+            syncFilterInputsFromState();
+            renderCatalog();
+            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+        } else if (tab === 'featured') {
+            resetFilters({ keepQuickTab: true });
+            state.filters.tag = 'Featured';
+            syncFilterInputsFromState();
+            renderCatalog();
+            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+        } else if (tab === 'free_delivery') {
+            resetFilters({ keepQuickTab: true });
+            state.filters.tag = 'Free Delivery';
+            syncFilterInputsFromState();
+            renderCatalog();
+            document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    function resetPopupCopyBtn() {
+        const copyBtn = document.getElementById('popup-copy-order-btn');
+        if (!copyBtn) return;
+        const label = copyBtn.querySelector('span');
+        if (label) label.textContent = 'Copy';
+        copyBtn.classList.remove('border-emerald-300', 'bg-emerald-50', 'text-emerald-700');
+        copyBtn.classList.add('border-slate-300', 'bg-white', 'text-slate-800');
+    }
+
+    function openOrderConfirmedPopup(order) {
+        const modal = document.getElementById('order-confirmed-popup-modal');
+        if (!modal || !order) return;
+
+        const shortCode = String(order.orderId || '').split('-').pop() || order.orderId;
+        document.getElementById('popup-order-id').textContent = `#${order.orderId}`;
+        document.getElementById('popup-whatsapp-num').textContent = order.whatsappNumber || '';
+        document.getElementById('popup-order-total').textContent = formatPkr(order.grandTotal);
+        document.getElementById('popup-order-status').textContent = 'Waiting for WhatsApp Confirmation';
+        const shortEl = document.getElementById('popup-short-code');
+        if (shortEl) shortEl.textContent = shortCode;
+        resetPopupCopyBtn();
+        modal.classList.remove('hidden');
+    }
+
+    function closeOrderConfirmedPopup() {
+        const modal = document.getElementById('order-confirmed-popup-modal');
+        if (modal) modal.classList.add('hidden');
     }
 
     function bindSearchSuggestions(inputEl) {
@@ -650,15 +922,15 @@
             ).slice(0, 5);
 
             if (matches.length === 0) {
-                box.innerHTML = '<div class="px-4 py-3 text-xs text-gray-500">No matching products found.</div>';
+                box.innerHTML = '<div class="px-4 py-3 text-xs text-slate-500">No matching products found.</div>';
             } else {
                 box.innerHTML = matches.map((p) => `
-                    <button type="button" data-sug-id="${p.id}" class="sug-item w-full text-left px-3.5 py-2.5 hover:bg-gray-50 flex items-center justify-between gap-3">
+                    <button type="button" data-sug-id="${p.id}" class="sug-item w-full text-left px-3.5 py-2.5 hover:bg-slate-50 flex items-center justify-between gap-3">
                         <div class="flex items-center gap-2.5 min-w-0">
-                            <img src="${escapeHtml(p.images?.[0] || '/images/product_qled_tv.jpg')}" alt="" class="w-9 h-9 rounded object-cover bg-gray-100 shrink-0" />
+                            <img src="${escapeHtml(p.images?.[0] || '/images/product_qled_tv.jpg')}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/images/product_qled_tv.jpg';" class="w-9 h-9 rounded-lg object-cover bg-slate-100 shrink-0" />
                             <div class="min-w-0">
-                                <p class="text-xs font-semibold text-gray-900 truncate">${escapeHtml(p.title)}</p>
-                                <p class="text-[11px] text-gray-500">${escapeHtml(p.sku)}</p>
+                                <p class="text-xs font-semibold text-slate-900 truncate">${escapeHtml(p.title)}</p>
+                                <p class="text-[11px] text-slate-500">${escapeHtml(p.sku)}</p>
                             </div>
                         </div>
                         <span class="text-xs font-bold text-brand-500 tabular-nums shrink-0">${formatPkr(p.discountPrice)}</span>
@@ -687,13 +959,16 @@
         const resultEl = document.getElementById('track-order-result');
         if (!resultEl) return;
         resultEl.classList.remove('hidden');
-        resultEl.innerHTML = '<p class="text-sm text-gray-500">Looking up order...</p>';
+        resultEl.innerHTML = '<p class="text-sm text-slate-500">Looking up order...</p>';
 
         try {
             const { order } = await request(`/api/orders/track/${encodeURIComponent(orderId.trim())}`);
+            const shortCode = String(order.orderId || '').split('-').pop() || order.orderId;
             const statusColor =
                 order.orderStatus === 'Confirmed' || order.orderStatus === 'Delivered'
                     ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : order.orderStatus === 'Dispatched' || order.orderStatus === 'Shipped'
+                    ? 'bg-sky-50 text-sky-800 border-sky-200'
                     : order.orderStatus === 'Cancelled'
                     ? 'bg-red-50 text-red-700 border-red-200'
                     : 'bg-amber-50 text-amber-800 border-amber-200';
@@ -701,27 +976,33 @@
             resultEl.innerHTML = `
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <p class="font-mono text-lg font-bold text-gray-950">#${escapeHtml(order.orderId)}</p>
-                        <p class="text-xs text-gray-500">Placed on ${escapeHtml(order.orderDate)} · ${escapeHtml(order.paymentMethod)}</p>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <p class="font-mono text-lg font-bold text-slate-950">#${escapeHtml(order.orderId)}</p>
+                            <button id="track-copy-order-btn" type="button" class="h-7 px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 text-[11px] font-semibold">
+                                Copy ID
+                            </button>
+                            <span class="font-mono text-xs text-slate-500">Code: ${escapeHtml(shortCode)}</span>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-0.5">Placed on ${escapeHtml(order.orderDate)} · ${escapeHtml(order.paymentMethod)}</p>
                     </div>
-                    <span class="px-3 py-1 text-xs font-bold border rounded ${statusColor}">${escapeHtml(order.orderStatus)}</span>
+                    <span class="px-3 py-1 text-xs font-bold border rounded-lg ${statusColor}">${escapeHtml(order.orderStatus)}</span>
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-gray-50 border border-gray-200 rounded p-4 text-xs">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs">
                     <div>
-                        <p class="font-semibold text-gray-500 uppercase">Customer</p>
-                        <p class="font-bold text-gray-900 mt-0.5">${escapeHtml(order.customerName)}</p>
-                        <p class="font-mono text-gray-700">${escapeHtml(order.whatsappNumber)}</p>
+                        <p class="font-semibold text-slate-500 uppercase">Customer</p>
+                        <p class="font-bold text-slate-900 mt-0.5">${escapeHtml(order.customerName)}</p>
+                        <p class="font-mono text-slate-700">${escapeHtml(order.whatsappNumber)}</p>
                     </div>
                     <div>
-                        <p class="font-semibold text-gray-500 uppercase">Shipping Destination</p>
-                        <p class="font-bold text-gray-900 mt-0.5">${escapeHtml(order.shippingAddress)}, ${escapeHtml(order.city)}</p>
-                        ${order.nearestLandmark ? `<p class="text-gray-600">Landmark: ${escapeHtml(order.nearestLandmark)}</p>` : ''}
+                        <p class="font-semibold text-slate-500 uppercase">Shipping Destination</p>
+                        <p class="font-bold text-slate-900 mt-0.5">${escapeHtml(order.shippingAddress)}, ${escapeHtml(order.city)}</p>
+                        ${order.nearestLandmark ? `<p class="text-slate-600">Landmark: ${escapeHtml(order.nearestLandmark)}</p>` : ''}
                     </div>
                 </div>
                 <div class="space-y-2 text-sm">
                     ${(order.items || []).map((i) => `
-                        <div class="flex justify-between border-b border-gray-100 pb-2">
-                            <span>${escapeHtml(i.title)} × ${i.quantity}</span>
+                        <div class="flex justify-between border-b border-slate-100 pb-2">
+                            <span>${escapeHtml(i.title)}${i.variant ? ` (${escapeHtml(i.variant)})` : ''} × ${i.quantity}</span>
                             <span class="tabular-nums font-semibold">${formatPkr(i.lineTotal)}</span>
                         </div>
                     `).join('')}
@@ -731,6 +1012,16 @@
                     </div>
                 </div>
             `;
+
+            document.getElementById('track-copy-order-btn')?.addEventListener('click', async (ev) => {
+                const btn = ev.currentTarget;
+                const ok = await copyTextToClipboard(order.orderId);
+                if (ok) {
+                    btn.textContent = 'Copied ✓';
+                    showToast(`Copied ${order.orderId}`);
+                    setTimeout(() => { btn.textContent = 'Copy ID'; }, 1800);
+                }
+            });
         } catch (err) {
             resultEl.innerHTML = `<p class="text-sm font-semibold text-red-600">${escapeHtml(err.message)}</p>`;
         }
@@ -766,17 +1057,22 @@
             btn.addEventListener('click', () => switchView(btn.dataset.nav));
         });
 
+        document.querySelectorAll('.quick-tab-btn').forEach((btn) => {
+            btn.addEventListener('click', () => applyQuickTab(btn.dataset.quickTab));
+        });
+
         document.getElementById('brand-home-btn')?.addEventListener('click', () => {
             resetFilters();
             switchView('store');
         });
         document.getElementById('back-to-store-btn')?.addEventListener('click', () => switchView('store'));
-        document.getElementById('hero-shop-offers-btn')?.addEventListener('click', () => {
-            document.getElementById('flash-deals-section')?.scrollIntoView({ behavior: 'smooth' });
+        document.getElementById('reset-category-btn')?.addEventListener('click', () => resetFilters());
+        document.getElementById('clear-filters-btn')?.addEventListener('click', () => resetFilters());
+
+        document.getElementById('mobile-filter-toggle-btn')?.addEventListener('click', () => {
+            const panel = document.getElementById('catalog-filters-panel');
+            if (panel) panel.classList.toggle('hidden');
         });
-        document.getElementById('hero-track-order-btn')?.addEventListener('click', () => switchView('track'));
-        document.getElementById('reset-category-btn')?.addEventListener('click', resetFilters);
-        document.getElementById('clear-filters-btn')?.addEventListener('click', resetFilters);
 
         document.getElementById('wishlist-filter-btn')?.addEventListener('click', () => {
             state.wishlistOnly = !state.wishlistOnly;
@@ -785,7 +1081,7 @@
             document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
         });
 
-        // Cart drawer controls
+        // Order Bag drawer controls
         const drawer = document.getElementById('cart-drawer-backdrop');
         document.getElementById('open-cart-btn')?.addEventListener('click', () => drawer.classList.remove('hidden'));
         document.getElementById('close-cart-btn')?.addEventListener('click', () => drawer.classList.add('hidden'));
@@ -802,6 +1098,46 @@
         document.getElementById('pdp-close-btn')?.addEventListener('click', () => pdpModal.classList.add('hidden'));
         pdpModal?.addEventListener('click', (e) => {
             if (e.target === pdpModal) pdpModal.classList.add('hidden');
+        });
+
+        // Animated Order Confirmation Pop-Up controls
+        const orderPopupModal = document.getElementById('order-confirmed-popup-modal');
+        document.getElementById('popup-copy-order-btn')?.addEventListener('click', async () => {
+            const orderIdText = state.lastOrder?.orderId ||
+                document.getElementById('popup-order-id')?.textContent?.replace(/^#/, '').trim() || '';
+            if (!orderIdText) return;
+            const ok = await copyTextToClipboard(orderIdText);
+            const copyBtn = document.getElementById('popup-copy-order-btn');
+            const label = copyBtn?.querySelector('span');
+            if (ok && copyBtn) {
+                if (label) label.textContent = 'Copied ✓';
+                copyBtn.classList.remove('border-slate-300', 'bg-white', 'text-slate-800');
+                copyBtn.classList.add('border-emerald-300', 'bg-emerald-50', 'text-emerald-700');
+                showToast(`Order ID ${orderIdText} copied to clipboard`);
+                setTimeout(resetPopupCopyBtn, 2200);
+            }
+        });
+        document.getElementById('popup-close-btn')?.addEventListener('click', () => {
+            closeOrderConfirmedPopup();
+            switchView('store');
+        });
+        document.getElementById('popup-continue-btn')?.addEventListener('click', () => {
+            closeOrderConfirmedPopup();
+            switchView('store');
+        });
+        document.getElementById('popup-track-btn')?.addEventListener('click', () => {
+            closeOrderConfirmedPopup();
+            switchView('track');
+            if (state.lastOrder) {
+                document.getElementById('track-order-input').value = state.lastOrder.orderId;
+                lookupTrackingOrder(state.lastOrder.orderId);
+            }
+        });
+        orderPopupModal?.addEventListener('click', (e) => {
+            if (e.target === orderPopupModal) {
+                closeOrderConfirmedPopup();
+                switchView('store');
+            }
         });
 
         // Filters
@@ -840,7 +1176,7 @@
         document.getElementById('co-city')?.addEventListener('change', refreshCheckoutSummary);
         document.getElementById('co-speed')?.addEventListener('change', refreshCheckoutSummary);
 
-        // COD Checkout Submission
+        // COD Checkout Submission -> Show Animated Confirmation Pop-up Modal (with Copy Order ID button)
         document.getElementById('cod-checkout-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const errEl = document.getElementById('checkout-error-msg');
@@ -860,7 +1196,7 @@
 
             const btn = document.getElementById('place-cod-order-btn');
             btn.disabled = true;
-            btn.textContent = 'Placing Order & Sending WhatsApp Receipt...';
+            btn.textContent = 'Placing Order...';
 
             try {
                 const res = await request('/api/orders/checkout', {
@@ -870,70 +1206,20 @@
                 state.lastOrder = res.order;
                 state.cart = [];
                 saveCart();
+                e.target.reset();
                 loadBootstrap().catch(() => {});
-
-                document.getElementById('checkout-form-container').classList.add('hidden');
-                document.getElementById('checkout-success-panel').classList.remove('hidden');
-                document.getElementById('success-order-id').textContent = `#${res.order.orderId}`;
-                document.getElementById('success-whatsapp-num').textContent = res.order.whatsappNumber;
-                document.getElementById('success-receipt-preview').textContent = res.whatsapp.receiptText;
-                document.getElementById('success-order-status').textContent = res.order.orderStatus;
-                document.getElementById('sim-webhook-reply-banner').classList.add('hidden');
-                showToast(`Order #${res.order.orderId} placed! WhatsApp receipt dispatched.`);
+                switchView('store');
+                openOrderConfirmedPopup(res.order);
             } catch (err) {
                 errEl.textContent = err.message;
                 errEl.classList.remove('hidden');
             } finally {
                 btn.disabled = false;
-                btn.textContent = 'Place COD Order & Send WhatsApp Confirmation';
+                btn.textContent = 'Place COD Order';
             }
         });
 
-        // Simulated Webhook Confirm / Cancel buttons on Checkout Receipt Preview
-        const triggerOrderWebhookDecision = async (decision) => {
-            if (!state.lastOrder) return;
-            const buttonId = decision === 'Confirmed'
-                ? `confirm_order_${state.lastOrder.orderId}`
-                : `cancel_order_${state.lastOrder.orderId}`;
-            try {
-                const res = await request('/api/whatsapp/webhook', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        buttonId,
-                        from: state.lastOrder.whatsappDigits,
-                        senderName: state.lastOrder.customerName
-                    })
-                });
-                const updatedOrder = res.outcome?.order;
-                if (updatedOrder) {
-                    state.lastOrder = updatedOrder;
-                    const statusBadge = document.getElementById('success-order-status');
-                    statusBadge.textContent = updatedOrder.orderStatus;
-                    statusBadge.className = updatedOrder.orderStatus === 'Confirmed'
-                        ? 'px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded'
-                        : 'px-3 py-1.5 text-xs font-bold bg-red-50 text-red-700 border border-red-200 rounded';
-                }
-                const banner = document.getElementById('sim-webhook-reply-banner');
-                banner.textContent = res.outcome?.replyText || 'Status updated via WhatsApp webhook.';
-                banner.classList.remove('hidden');
-                showToast(`Order #${state.lastOrder.orderId} marked ${decision}`);
-            } catch (err) {
-                showToast(err.message, true);
-            }
-        };
-
-        document.getElementById('sim-confirm-order-btn')?.addEventListener('click', () => triggerOrderWebhookDecision('Confirmed'));
-        document.getElementById('sim-cancel-order-btn')?.addEventListener('click', () => triggerOrderWebhookDecision('Cancelled'));
-        document.getElementById('success-continue-btn')?.addEventListener('click', () => switchView('store'));
-        document.getElementById('success-track-btn')?.addEventListener('click', () => {
-            switchView('track');
-            if (state.lastOrder) {
-                document.getElementById('track-order-input').value = state.lastOrder.orderId;
-                lookupTrackingOrder(state.lastOrder.orderId);
-            }
-        });
-
-        // Order Tracking Form
+        // Order Tracking Form (supports ORD-2026-9336 or 9336)
         document.getElementById('track-order-form')?.addEventListener('submit', (e) => {
             e.preventDefault();
             const val = document.getElementById('track-order-input').value;

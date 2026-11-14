@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["nodejs_22", "ffmpeg", "python3", "gcc", "gnumake"]
+nixPkgs = ["nodejs_22", "python3", "gcc", "gnumake"]
 
 [phases.install]
-cmds = ["npm install --legacy-peer-deps --ignore-scripts && npm rebuild sharp"]
+cmds = ["npm install --omit=dev --legacy-peer-deps"]
 
 [start]
 cmd = "node server.js"

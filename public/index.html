@@ -41,8 +41,8 @@
   <style>
     body {
       font-family: 'DM Sans', system-ui, sans-serif;
-      background-color: #FAFAFA;
-      color: #111827;
+      background-color: #F8FAFC;
+      color: #0F172A;
     }
     h1, h2, h3, h4, .font-display {
       font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
@@ -50,27 +50,95 @@
     .tabular-nums {
       font-variant-numeric: tabular-nums;
     }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    @keyframes modalBackdropFade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes modalCardPop {
+      0% { opacity: 0; transform: translateY(16px) scale(0.94); }
+      70% { opacity: 1; transform: translateY(-2px) scale(1.01); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes checkStrokeDraw {
+      from { stroke-dashoffset: 48; }
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes ringExpand {
+      0% { opacity: 0.7; transform: scale(0.8); }
+      100% { opacity: 0; transform: scale(1.45); }
+    }
+    .animate-modal-backdrop {
+      animation: modalBackdropFade 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .animate-modal-card {
+      animation: modalCardPop 320ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .animate-check-stroke {
+      stroke-dasharray: 48;
+      stroke-dashoffset: 48;
+      animation: checkStrokeDraw 420ms cubic-bezier(0.22, 1, 0.36, 1) 140ms forwards;
+    }
+    .animate-ring-expand {
+      animation: ringExpand 900ms cubic-bezier(0.16, 1, 0.3, 1) 120ms forwards;
+    }
+    @keyframes brandTitleShimmer {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    @keyframes brandTitleFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-1.5px); }
+    }
+    .brand-animated-title {
+      background-image: linear-gradient(110deg, #0F172A 0%, #E8531A 38%, #C94310 58%, #0F172A 100%);
+      background-size: 220% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: brandTitleShimmer 5s ease-in-out infinite, brandTitleFloat 3.6s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .animate-modal-backdrop,
+      .animate-modal-card,
+      .animate-check-stroke,
+      .animate-ring-expand,
+      .brand-animated-title {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+        stroke-dashoffset: 0 !important;
+      }
+      .brand-animated-title {
+        background-image: none !important;
+        color: #0F172A !important;
+      }
+    }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-[#FAFAFA] text-[#111827] antialiased">
+<body class="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900 antialiased">
 
   <!-- Sticky Single-Row Top Bar -->
-  <header class="sticky top-0 z-40 bg-white border-b border-gray-200">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-      <!-- Zone 1: Brand Wordmark -->
-      <div class="flex items-center gap-3 shrink-0">
-        <button id="brand-home-btn" type="button" class="text-left focus:outline-none group">
-          <span class="block font-display font-extrabold text-lg sm:text-xl tracking-tight text-gray-900 group-hover:text-brand-500 transition-colors whitespace-nowrap">
-            Al-Mumtaz Electronics
-          </span>
-          <span class="block text-[11px] font-medium text-gray-500 tracking-wide whitespace-nowrap">
-            Hasilpur · 03299931199
+  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 sm:h-[74px] flex items-center justify-between gap-4 sm:gap-8">
+      <!-- Zone 1: Brand Wordmark Only (Big Animated Display Font) -->
+      <div class="flex items-center shrink-0">
+        <button id="brand-home-btn" type="button" class="text-left focus:outline-none">
+          <span class="brand-animated-title block font-display font-extrabold text-[19px] sm:text-3xl lg:text-[34px] tracking-tight leading-none whitespace-nowrap">
+            Al Mumtaz Electronics
           </span>
         </button>
       </div>
 
       <!-- Zone 2: Live Search + Nav Links (Desktop) -->
-      <div class="hidden md:flex items-center gap-5 flex-1 max-w-2xl mx-4">
+      <div class="hidden md:flex items-center gap-5 flex-1 max-w-2xl mx-2">
         <div class="relative flex-1">
           <label for="global-search-input" class="sr-only">Search electronics</label>
           <input
@@ -78,134 +146,188 @@
             type="search"
             autocomplete="off"
             placeholder="Search QLED TVs, solar inverters, ACs, SKUs..."
-            class="w-full h-10 pl-3.5 pr-10 bg-gray-100 border border-gray-200 rounded text-sm text-gray-900 placeholder-gray-500 focus:bg-white focus:border-brand-500 focus:outline-none transition-colors"
+            class="w-full h-10 pl-3.5 pr-10 bg-slate-100/90 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-500 focus:bg-white focus:border-brand-500 focus:outline-none transition-colors"
           />
-          <svg class="w-4 h-4 text-gray-500 absolute right-3 top-3 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg class="w-4 h-4 text-slate-500 absolute right-3.5 top-3 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 105.5 5.5a7.5 7.5 0 0011.15 11.15z" />
           </svg>
-          <div id="search-suggestions" class="hidden absolute left-0 right-0 top-11 bg-white border border-gray-200 rounded shadow-lg z-50 max-h-80 overflow-y-auto divide-y divide-gray-100"></div>
+          <div id="search-suggestions" class="hidden absolute left-0 right-0 top-11 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-80 overflow-y-auto divide-y divide-slate-100"></div>
         </div>
 
-        <nav class="flex items-center gap-4 text-sm font-semibold">
+        <nav class="flex items-center gap-5 text-sm font-semibold">
           <button type="button" data-nav="store" class="nav-link whitespace-nowrap shrink-0 text-brand-500">Store</button>
-          <button type="button" data-nav="track" class="nav-link whitespace-nowrap shrink-0 text-gray-700 hover:text-gray-950">Track Order</button>
+          <button type="button" data-nav="track" class="nav-link whitespace-nowrap shrink-0 text-slate-700 hover:text-slate-950 transition-colors">Track Order</button>
         </nav>
       </div>
 
-      <!-- Zone 3: Wishlist & Cart Trigger -->
+      <!-- Zone 3: Locked-Size Wishlist & Bag Action Icons (Zero text shift) -->
       <div class="flex items-center gap-2.5 shrink-0">
-        <button id="wishlist-filter-btn" type="button" title="Saved Wishlist" class="h-10 px-3 border border-gray-200 rounded bg-white hover:bg-gray-50 text-xs sm:text-sm font-semibold text-gray-800 flex items-center gap-1.5 whitespace-nowrap shrink-0">
-          <svg class="w-4 h-4 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+        <button
+          id="wishlist-filter-btn"
+          type="button"
+          title="Saved Items"
+          aria-label="Saved Wishlist"
+          class="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-800 flex items-center justify-center shrink-0 transition-colors"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.9">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
           </svg>
-          <span class="hidden sm:inline">Saved</span>
-          <span id="wishlist-count" class="tabular-nums text-gray-600">0</span>
+          <span
+            id="wishlist-count"
+            class="hidden absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-slate-900 text-white border-2 border-white text-[11px] font-bold leading-none items-center justify-center tabular-nums pointer-events-none"
+          >0</span>
         </button>
 
-        <button id="open-cart-btn" type="button" class="h-10 px-3.5 bg-brand-500 hover:bg-brand-600 text-white rounded text-xs sm:text-sm font-semibold flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+        <!-- Locked-size icon-only bag button: shows item count badge only when > 0, never mentions "Cart" -->
+        <button
+          id="open-cart-btn"
+          type="button"
+          title="Shopping Bag"
+          aria-label="Open Shopping Bag"
+          class="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-slate-950 hover:bg-brand-500 text-white flex items-center justify-center shrink-0 transition-colors shadow-sm"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
           </svg>
-          <span>Cart</span>
-          <span id="cart-badge-count" class="tabular-nums font-bold">0</span>
+          <span
+            id="cart-badge-count"
+            class="hidden absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-brand-500 text-white border-2 border-white text-[11px] font-bold leading-none items-center justify-center tabular-nums pointer-events-none"
+          >0</span>
         </button>
       </div>
     </div>
 
-    <!-- Mobile Sub-bar (Search & Quick Navigation) -->
-    <div class="md:hidden border-t border-gray-100 px-4 py-2.5 bg-white space-y-2">
+    <!-- Compact Mobile Search Row -->
+    <div class="md:hidden border-t border-slate-100 px-4 py-2 bg-white">
       <div class="relative">
+        <label for="mobile-search-input" class="sr-only">Search electronics</label>
         <input
           id="mobile-search-input"
           type="search"
-          placeholder="Search products, brands, or SKU..."
-          class="w-full h-9 px-3 bg-gray-100 border border-gray-200 rounded text-sm focus:bg-white focus:border-brand-500 focus:outline-none"
+          placeholder="Search TVs, solar inverters, ACs, SKU..."
+          class="w-full h-9 pl-3 pr-9 bg-slate-100 border border-slate-200 rounded-lg text-sm focus:bg-white focus:border-brand-500 focus:outline-none"
         />
-      </div>
-      <div class="flex items-center gap-4 text-xs font-semibold">
-        <button type="button" data-nav="store" class="nav-link text-brand-500">Storefront</button>
-        <button type="button" data-nav="track" class="nav-link text-gray-700">Track Order</button>
+        <svg class="w-4 h-4 text-slate-500 absolute right-3 top-2.5 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 105.5 5.5a7.5 7.5 0 0011.15 11.15z" />
+        </svg>
       </div>
     </div>
   </header>
 
   <!-- Toast Banner -->
-  <div id="toast-banner" class="hidden fixed bottom-5 right-5 z-50 max-w-sm bg-gray-900 text-white px-4 py-3 rounded shadow-xl text-sm font-medium border border-gray-700"></div>
+  <div id="toast-banner" class="hidden fixed bottom-5 right-5 z-50 max-w-sm bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-sm font-medium border border-slate-700"></div>
 
   <!-- MAIN CONTENT VIEWS -->
   <main class="flex-1">
     <!-- 1. STOREFRONT VIEW -->
     <section id="view-store" class="view-section">
-      <!-- Hero Showcase -->
-      <div class="bg-white border-b border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-8 lg:py-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          <div class="lg:col-span-6 space-y-5">
-            <p class="text-xs font-semibold uppercase tracking-[0.14em] text-brand-500">
-              Official Electronics Marketplace · Hasilpur
-            </p>
-            <h1 class="font-display text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-gray-950 leading-[1.1]">
-              Genuine Home Appliances &amp; Solar Power, Verified on WhatsApp.
-            </h1>
-            <p class="text-base text-gray-600 max-w-xl leading-relaxed">
-              Shop 4K QLED TVs, hybrid solar inverters, T3 inverter ACs, and smart audio directly from Al-Mumtaz Electronics with Cash on Delivery and instant WhatsApp order confirmation.
-            </p>
-            <div class="flex flex-wrap items-center gap-3 pt-1">
-              <button id="hero-shop-offers-btn" type="button" class="h-11 px-6 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold rounded transition-colors">
-                Explore Flash Deals
-              </button>
-              <button id="hero-track-order-btn" type="button" class="h-11 px-5 bg-white hover:bg-gray-50 text-gray-900 border border-gray-300 text-sm font-semibold rounded transition-colors">
-                Track COD Order
-              </button>
-            </div>
-            <div class="pt-3 border-t border-gray-100 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-medium text-gray-600">
-              <span>Free COD in Hasilpur</span>
-              <span class="text-gray-300">|</span>
-              <span>Official Brand Warranties</span>
-              <span class="text-gray-300">|</span>
-              <span>WhatsApp Support: 03299931199</span>
-            </div>
+      <!-- Quick-Action Store Navigation Strip -->
+      <div id="store-quick-nav" class="bg-white border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+          <div class="flex items-center gap-2 overflow-x-auto no-scrollbar" role="navigation" aria-label="Store quick actions">
+            <button
+              type="button"
+              data-quick-tab="all"
+              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-slate-950 text-white border border-slate-950 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              <span>All Electronics</span>
+            </button>
+
+            <button
+              type="button"
+              data-quick-tab="categories"
+              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-white text-slate-800 border border-slate-200 hover:border-slate-400 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <svg class="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+              </svg>
+              <span>Categories</span>
+            </button>
+
+            <button
+              type="button"
+              data-quick-tab="sale"
+              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-white text-slate-800 border border-slate-200 hover:border-brand-500 hover:text-brand-600 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <svg class="w-4 h-4 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+              <span>Sale Items &amp; Offers</span>
+            </button>
+
+            <button
+              type="button"
+              data-quick-tab="featured"
+              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-white text-slate-800 border border-slate-200 hover:border-slate-400 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <svg class="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+              </svg>
+              <span>Featured Items</span>
+            </button>
+
+            <button
+              type="button"
+              data-quick-tab="free_delivery"
+              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-white text-slate-800 border border-slate-200 hover:border-slate-400 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <svg class="w-4 h-4 text-wa-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+              </svg>
+              <span>Free Delivery</span>
+            </button>
+
+            <button
+              type="button"
+              data-quick-tab="track"
+              class="quick-tab-btn h-9 px-3.5 rounded-lg text-xs sm:text-sm font-semibold bg-white text-slate-800 border border-slate-200 hover:border-slate-400 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <svg class="w-4 h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <span>Track Order</span>
+            </button>
           </div>
 
-          <div class="lg:col-span-6">
-            <div class="relative rounded overflow-hidden border border-gray-200 bg-gray-100 aspect-[16/9]">
-              <img
-                src="/images/hero_electronics_showcase.jpg"
-                alt="Al-Mumtaz Electronics Showroom Showcase"
-                class="w-full h-full object-cover"
-              />
-            </div>
+          <div class="hidden xl:flex items-center gap-2 text-xs font-semibold text-slate-600 whitespace-nowrap shrink-0">
+            <svg class="w-4 h-4 text-wa-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+            <span>Genuine Warranty · COD Nationwide</span>
           </div>
         </div>
       </div>
 
       <!-- Featured Categories Grid -->
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-10 pb-4">
-        <div class="flex items-baseline justify-between mb-5">
+      <div id="categories-section" class="max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-4">
+        <div class="flex flex-wrap items-baseline justify-between gap-2 mb-5">
           <div>
-            <h2 class="font-display text-xl sm:text-2xl font-bold text-gray-950">Shop by Category</h2>
-            <p class="text-sm text-gray-600 mt-0.5">Select a department to filter the showroom catalog.</p>
+            <p class="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-500">Showroom Departments</p>
+            <h2 class="font-display text-xl sm:text-2xl font-bold text-slate-950 mt-0.5">Shop by Category</h2>
           </div>
-          <button id="reset-category-btn" type="button" class="text-sm font-semibold text-brand-500 hover:text-brand-600">
+          <button id="reset-category-btn" type="button" class="text-sm font-semibold text-brand-500 hover:text-brand-600 whitespace-nowrap">
             View All Products
           </button>
         </div>
-        <div id="categories-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5"></div>
+        <div id="categories-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4"></div>
       </div>
 
-      <!-- Flash Deals / Offered Items Section -->
-      <div id="flash-deals-section" class="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        <div class="bg-white border border-gray-200 rounded p-5 sm:p-6">
-          <div class="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-gray-200">
-            <div class="flex items-center gap-4">
-              <h2 class="font-display text-xl sm:text-2xl font-bold text-gray-950">Flash Deals &amp; Offered Items</h2>
-              <span class="text-xs font-semibold uppercase tracking-wider text-brand-500">Limited Stock</span>
+      <!-- Sale Items & Offers Showcase -->
+      <div id="flash-deals-section" class="max-w-7xl mx-auto px-4 sm:px-6 py-7">
+        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+          <div class="bg-slate-950 text-white px-5 sm:px-7 py-4 sm:py-5 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-500">Limited Time Showroom Pricing</p>
+              <h2 class="font-display text-lg sm:text-2xl font-bold text-white mt-0.5">Sale Items &amp; Flash Offers</h2>
             </div>
-            <div class="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-700">
-              <span>Ends in</span>
-              <span id="flash-countdown" class="font-mono tabular-nums font-semibold bg-gray-900 text-white px-2.5 py-1 rounded">04:28:19</span>
+            <div class="flex items-center gap-2.5 text-xs sm:text-sm font-medium text-slate-300">
+              <span>Ends In</span>
+              <span id="flash-countdown" class="font-mono tabular-nums font-semibold bg-brand-500 text-white px-3 py-1 rounded-lg">04:28:19</span>
             </div>
           </div>
-          <div id="flash-deals-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5"></div>
+          <div id="flash-deals-grid" class="p-5 sm:p-7 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5"></div>
         </div>
       </div>
 
@@ -213,78 +335,91 @@
       <div id="catalog-section" class="max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-16">
         <div class="flex flex-col lg:flex-row gap-8">
           <!-- Left Filter Sidebar -->
-          <aside class="lg:w-64 shrink-0 space-y-6">
-            <div class="bg-white border border-gray-200 rounded p-5 space-y-5">
-              <div class="flex items-center justify-between border-b border-gray-100 pb-3">
-                <h3 class="font-display font-bold text-base text-gray-950">Filters</h3>
-                <button id="clear-filters-btn" type="button" class="text-xs font-semibold text-brand-500 hover:underline">Reset</button>
-              </div>
-
-              <div>
-                <label for="filter-category" class="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Category</label>
-                <select id="filter-category" class="w-full h-9 px-2.5 bg-gray-50 border border-gray-200 rounded text-sm focus:bg-white focus:border-brand-500 focus:outline-none">
-                  <option value="all">All Categories</option>
-                </select>
-              </div>
-
-              <div>
-                <label for="filter-price-max" class="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-                  Max Price: <span id="filter-price-label" class="text-gray-900 tabular-nums">Any</span>
-                </label>
-                <input id="filter-price-max" type="range" min="10000" max="300000" step="5000" value="300000" class="w-full accent-[#E8531A]" />
-                <div class="flex justify-between text-[11px] text-gray-500 tabular-nums mt-1">
-                  <span>Rs. 10k</span>
-                  <span>Rs. 300k</span>
-                </div>
-              </div>
-
-              <div>
-                <label for="filter-discount" class="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Minimum Discount</label>
-                <select id="filter-discount" class="w-full h-9 px-2.5 bg-gray-50 border border-gray-200 rounded text-sm">
-                  <option value="">Any Discount</option>
-                  <option value="10">10% Off or more</option>
-                  <option value="15">15% Off or more</option>
-                  <option value="20">20% Off or more</option>
-                  <option value="30">30% Off or more</option>
-                </select>
-              </div>
-
-              <div>
-                <label for="filter-tag" class="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Collection Tag</label>
-                <select id="filter-tag" class="w-full h-9 px-2.5 bg-gray-50 border border-gray-200 rounded text-sm">
-                  <option value="">All Tags</option>
-                  <option value="Featured">Featured</option>
-                  <option value="Hot">Hot</option>
-                  <option value="New Arrival">New Arrival</option>
-                  <option value="Free Delivery">Free Delivery</option>
-                </select>
-              </div>
-
-              <label class="flex items-center gap-2.5 text-sm font-medium text-gray-800 cursor-pointer pt-1">
-                <input id="filter-instock" type="checkbox" class="w-4 h-4 accent-[#E8531A] rounded" />
-                <span>In Stock Only</span>
-              </label>
+          <aside class="lg:w-64 shrink-0 space-y-4">
+            <div class="lg:hidden flex items-center justify-between">
+              <button id="mobile-filter-toggle-btn" type="button" class="h-10 px-4 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                </svg>
+                <span>Filter Catalog</span>
+              </button>
             </div>
 
-            <!-- Official Shops Info Box -->
-            <div class="bg-white border border-gray-200 rounded p-5 space-y-2.5">
-              <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Official Storefront</p>
-              <p class="font-display font-bold text-sm text-gray-950">Al-Mumtaz Electronics</p>
-              <p class="text-xs text-gray-600 leading-relaxed">Main Railway Road, Hasilpur. Direct factory warranties &amp; verified COD delivery nationwide.</p>
+            <div id="catalog-filters-panel" class="hidden lg:block space-y-5 lg:sticky lg:top-24">
+              <div class="bg-white border border-slate-200 rounded-2xl p-5 space-y-5">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 class="font-display font-bold text-base text-slate-950">Refine Catalog</h3>
+                  <button id="clear-filters-btn" type="button" class="text-xs font-semibold text-brand-500 hover:underline">Reset</button>
+                </div>
+
+                <div>
+                  <label for="filter-category" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Category</label>
+                  <select id="filter-category" class="w-full h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:bg-white focus:border-brand-500 focus:outline-none">
+                    <option value="all">All Categories</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label for="filter-price-max" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                    Max Price: <span id="filter-price-label" class="text-slate-900 tabular-nums">Any</span>
+                  </label>
+                  <input id="filter-price-max" type="range" min="10000" max="300000" step="5000" value="300000" class="w-full accent-[#E8531A]" />
+                  <div class="flex justify-between text-[11px] text-slate-500 tabular-nums mt-1">
+                    <span>Rs. 10k</span>
+                    <span>Rs. 300k</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label for="filter-discount" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Sale &amp; Discount</label>
+                  <select id="filter-discount" class="w-full h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    <option value="">All Prices</option>
+                    <option value="1">On Sale (Any % Off)</option>
+                    <option value="10">10% Off or more</option>
+                    <option value="15">15% Off or more</option>
+                    <option value="20">20% Off or more</option>
+                    <option value="30">30% Off or more</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label for="filter-tag" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Collection Tag</label>
+                  <select id="filter-tag" class="w-full h-9 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                    <option value="">All Tags</option>
+                    <option value="Featured">Featured</option>
+                    <option value="Hot">Hot</option>
+                    <option value="New Arrival">New Arrival</option>
+                    <option value="Free Delivery">Free Delivery</option>
+                  </select>
+                </div>
+
+                <label class="flex items-center gap-2.5 text-sm font-medium text-slate-800 cursor-pointer pt-1">
+                  <input id="filter-instock" type="checkbox" class="w-4 h-4 accent-[#E8531A] rounded" />
+                  <span>In Stock Only</span>
+                </label>
+              </div>
+
+              <!-- Showroom Card -->
+              <div class="bg-slate-950 text-white rounded-2xl p-5 space-y-2">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-500">Showroom Guarantee</p>
+                <p class="font-display font-bold text-sm">Al-Mumtaz Electronics · Hasilpur</p>
+                <p class="text-xs text-slate-300 leading-relaxed">Main Railway Road, Hasilpur. Genuine factory-sealed units with open-parcel inspection &amp; automated WhatsApp COD dispatch.</p>
+                <a href="tel:03299931199" class="inline-block pt-1 font-mono text-xs font-bold text-white hover:text-brand-500 transition-colors">Helpline: 03299931199</a>
+              </div>
             </div>
           </aside>
 
           <!-- Product Grid & Sort Bar -->
           <div class="flex-1 min-w-0">
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-5 pb-3 border-b border-gray-200">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-6 pb-3.5 border-b border-slate-200">
               <div>
-                <h2 id="catalog-heading" class="font-display text-xl font-bold text-gray-950">All Electronics</h2>
-                <p id="catalog-count-label" class="text-xs text-gray-500 mt-0.5 tabular-nums">Loading catalog...</p>
+                <h2 id="catalog-heading" class="font-display text-xl sm:text-2xl font-bold text-slate-950">All Electronics</h2>
+                <p id="catalog-count-label" class="text-xs text-slate-500 mt-0.5 tabular-nums">Loading catalog...</p>
               </div>
 
               <div class="flex items-center gap-2.5">
-                <label for="sort-products" class="text-xs font-semibold text-gray-500">Sort by</label>
-                <select id="sort-products" class="h-9 px-3 bg-white border border-gray-200 rounded text-sm font-medium text-gray-800 focus:border-brand-500 focus:outline-none">
+                <label for="sort-products" class="text-xs font-semibold text-slate-500">Sort by</label>
+                <select id="sort-products" class="h-9 px-3 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-800 focus:border-brand-500 focus:outline-none">
                   <option value="newest">Newest Arrivals</option>
                   <option value="best_selling">Best Selling</option>
                   <option value="price_asc">Price: Low to High</option>
@@ -294,7 +429,7 @@
               </div>
             </div>
 
-            <div id="catalog-grid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5"></div>
+            <div id="catalog-grid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6"></div>
           </div>
         </div>
       </div>
@@ -302,35 +437,35 @@
 
     <!-- 2. CASH ON DELIVERY CHECKOUT VIEW -->
     <section id="view-checkout" class="view-section hidden max-w-6xl mx-auto px-4 sm:px-6 py-10">
-      <div class="mb-6 flex items-center justify-between">
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 class="font-display text-2xl sm:text-3xl font-bold text-gray-950">Cash on Delivery (COD) Checkout</h1>
-          <p class="text-sm text-gray-600 mt-1">An automated WhatsApp order receipt with Confirm &amp; Cancel buttons will be dispatched immediately after placing your order.</p>
+          <h1 class="font-display text-2xl sm:text-3xl font-bold text-slate-950">Cash on Delivery (COD) Checkout</h1>
+          <p class="text-sm text-slate-600 mt-1">Complete your delivery details below. After placing your order, confirm via the WhatsApp message sent to your number.</p>
         </div>
-        <button id="back-to-store-btn" type="button" class="text-sm font-semibold text-gray-700 hover:text-gray-950 underline">Back to Store</button>
+        <button id="back-to-store-btn" type="button" class="text-sm font-semibold text-slate-700 hover:text-slate-950 underline">Back to Store</button>
       </div>
 
       <div id="checkout-form-container" class="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <!-- Customer Shipping Form -->
-        <form id="cod-checkout-form" class="lg:col-span-7 bg-white border border-gray-200 rounded p-6 space-y-5">
-          <h2 class="font-display text-lg font-bold text-gray-950 border-b border-gray-100 pb-3">Delivery &amp; WhatsApp Details</h2>
+        <form id="cod-checkout-form" class="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 space-y-5">
+          <h2 class="font-display text-lg font-bold text-slate-950 border-b border-slate-100 pb-3">Delivery &amp; WhatsApp Details</h2>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label for="co-name" class="block text-xs font-semibold text-gray-700 mb-1.5">Full Name *</label>
-              <input id="co-name" name="customerName" required placeholder="e.g. Muhammad Bilal" class="w-full h-10 px-3 border border-gray-300 rounded text-sm focus:border-brand-500 focus:outline-none" />
+              <label for="co-name" class="block text-xs font-semibold text-slate-700 mb-1.5">Full Name *</label>
+              <input id="co-name" name="customerName" required placeholder="e.g. Muhammad Bilal" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm focus:border-brand-500 focus:outline-none" />
             </div>
             <div>
-              <label for="co-whatsapp" class="block text-xs font-semibold text-gray-700 mb-1.5">Active WhatsApp Number *</label>
-              <input id="co-whatsapp" name="whatsappNumber" required placeholder="+923299931199 or 03299931199" class="w-full h-10 px-3 border border-gray-300 rounded text-sm font-mono focus:border-brand-500 focus:outline-none" />
-              <p class="text-[11px] text-gray-500 mt-1">Used for automated WhatsApp COD confirmation buttons.</p>
+              <label for="co-whatsapp" class="block text-xs font-semibold text-slate-700 mb-1.5">Active WhatsApp Number *</label>
+              <input id="co-whatsapp" name="whatsappNumber" required placeholder="+923299931199 or 03299931199" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm font-mono focus:border-brand-500 focus:outline-none" />
+              <p class="text-[11px] text-slate-500 mt-1">We will send your WhatsApp confirmation message here.</p>
             </div>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label for="co-city" class="block text-xs font-semibold text-gray-700 mb-1.5">City *</label>
-              <input id="co-city" name="city" list="pk-cities" required value="Hasilpur" placeholder="e.g. Hasilpur" class="w-full h-10 px-3 border border-gray-300 rounded text-sm focus:border-brand-500 focus:outline-none" />
+              <label for="co-city" class="block text-xs font-semibold text-slate-700 mb-1.5">City *</label>
+              <input id="co-city" name="city" list="pk-cities" required value="Hasilpur" placeholder="e.g. Hasilpur" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm focus:border-brand-500 focus:outline-none" />
               <datalist id="pk-cities">
                 <option value="Hasilpur"></option>
                 <option value="Bahawalpur"></option>
@@ -343,8 +478,8 @@
               </datalist>
             </div>
             <div>
-              <label for="co-speed" class="block text-xs font-semibold text-gray-700 mb-1.5">COD Delivery Speed</label>
-              <select id="co-speed" name="deliverySpeed" class="w-full h-10 px-3 border border-gray-300 rounded text-sm bg-white focus:border-brand-500 focus:outline-none">
+              <label for="co-speed" class="block text-xs font-semibold text-slate-700 mb-1.5">COD Delivery Speed</label>
+              <select id="co-speed" name="deliverySpeed" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm bg-white focus:border-brand-500 focus:outline-none">
                 <option value="standard">Standard COD Delivery (2–4 Days)</option>
                 <option value="express">Express Priority COD (24–48 Hours)</option>
               </select>
@@ -352,156 +487,228 @@
           </div>
 
           <div>
-            <label for="co-address" class="block text-xs font-semibold text-gray-700 mb-1.5">Complete Shipping Address *</label>
-            <input id="co-address" name="shippingAddress" required placeholder="House #, Street, Mohalla / Sector" class="w-full h-10 px-3 border border-gray-300 rounded text-sm focus:border-brand-500 focus:outline-none" />
+            <label for="co-address" class="block text-xs font-semibold text-slate-700 mb-1.5">Complete Shipping Address *</label>
+            <input id="co-address" name="shippingAddress" required placeholder="House #, Street, Mohalla / Sector" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm focus:border-brand-500 focus:outline-none" />
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label for="co-landmark" class="block text-xs font-semibold text-gray-700 mb-1.5">Nearest Landmark</label>
-              <input id="co-landmark" name="nearestLandmark" placeholder="e.g. Near Railway Station" class="w-full h-10 px-3 border border-gray-300 rounded text-sm focus:border-brand-500 focus:outline-none" />
+              <label for="co-landmark" class="block text-xs font-semibold text-slate-700 mb-1.5">Nearest Landmark</label>
+              <input id="co-landmark" name="nearestLandmark" placeholder="e.g. Near Railway Station" class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm focus:border-brand-500 focus:outline-none" />
             </div>
             <div>
-              <label for="co-notes" class="block text-xs font-semibold text-gray-700 mb-1.5">Order Notes</label>
-              <input id="co-notes" name="orderNotes" placeholder="Call before delivery, timing..." class="w-full h-10 px-3 border border-gray-300 rounded text-sm focus:border-brand-500 focus:outline-none" />
+              <label for="co-notes" class="block text-xs font-semibold text-slate-700 mb-1.5">Order Notes</label>
+              <input id="co-notes" name="orderNotes" placeholder="Call before delivery, timing..." class="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm focus:border-brand-500 focus:outline-none" />
             </div>
           </div>
 
-          <div class="border border-emerald-200 bg-emerald-50/70 rounded p-4">
+          <div class="border border-emerald-200 bg-emerald-50/70 rounded-xl p-4">
             <label class="flex items-start gap-3 cursor-pointer">
               <input type="radio" name="paymentMethod" value="Cash on Delivery (COD)" checked class="mt-1 accent-[#0F7B4D]" />
               <div>
-                <span class="block text-sm font-bold text-gray-950">Cash on Delivery (COD) — Selected by Default</span>
-                <span class="block text-xs text-gray-600 mt-0.5">Pay cash at your doorstep upon inspecting the sealed box. Confirm order instantly on WhatsApp.</span>
+                <span class="block text-sm font-bold text-slate-950">Cash on Delivery (COD) — Selected by Default</span>
+                <span class="block text-xs text-slate-600 mt-0.5">Pay cash at your doorstep upon inspecting the sealed box. Confirm your order on WhatsApp once placed.</span>
               </div>
             </label>
           </div>
 
-          <p id="checkout-error-msg" class="hidden text-sm font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2"></p>
+          <p id="checkout-error-msg" class="hidden text-sm font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"></p>
 
-          <button id="place-cod-order-btn" type="submit" class="w-full h-12 bg-brand-500 hover:bg-brand-600 text-white font-display font-bold text-base rounded transition-colors">
-            Place COD Order &amp; Send WhatsApp Confirmation
+          <button id="place-cod-order-btn" type="submit" class="w-full h-12 bg-brand-500 hover:bg-brand-600 text-white font-display font-bold text-base rounded-xl transition-colors shadow-sm">
+            Place COD Order
           </button>
         </form>
 
         <!-- Order Summary Breakdown -->
-        <aside class="lg:col-span-5 bg-white border border-gray-200 rounded p-6 h-fit space-y-5">
-          <h2 class="font-display text-lg font-bold text-gray-950 border-b border-gray-100 pb-3">Order Summary</h2>
+        <aside class="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 h-fit space-y-5">
+          <h2 class="font-display text-lg font-bold text-slate-950 border-b border-slate-100 pb-3">Order Summary</h2>
           <div id="checkout-items-list" class="space-y-3 max-h-72 overflow-y-auto pr-1"></div>
 
-          <div class="border-t border-gray-200 pt-4 space-y-2.5 text-sm">
-            <div class="flex justify-between text-gray-600">
+          <div class="border-t border-slate-200 pt-4 space-y-2.5 text-sm">
+            <div class="flex justify-between text-slate-600">
               <span>Subtotal</span>
-              <span id="co-subtotal" class="tabular-nums font-semibold text-gray-900">Rs. 0</span>
+              <span id="co-subtotal" class="tabular-nums font-semibold text-slate-900">Rs. 0</span>
             </div>
             <div class="flex justify-between text-emerald-700">
               <span>Product Savings</span>
               <span id="co-discount" class="tabular-nums font-semibold">-Rs. 0</span>
             </div>
-            <div class="flex justify-between text-gray-600">
+            <div class="flex justify-between text-slate-600">
               <span>COD Delivery Charges</span>
-              <span id="co-shipping" class="tabular-nums font-semibold text-gray-900">Rs. 0</span>
+              <span id="co-shipping" class="tabular-nums font-semibold text-slate-900">Rs. 0</span>
             </div>
-            <div class="flex justify-between text-base font-bold text-gray-950 pt-3 border-t border-gray-200">
+            <div class="flex justify-between text-base font-bold text-slate-950 pt-3 border-t border-slate-200">
               <span>Grand Total (COD)</span>
               <span id="co-grand-total" class="tabular-nums text-brand-500 text-lg">Rs. 0</span>
             </div>
           </div>
         </aside>
       </div>
-
-      <!-- Post-Checkout Automated WhatsApp Confirmation Panel -->
-      <div id="checkout-success-panel" class="hidden bg-white border border-gray-200 rounded p-6 sm:p-8 max-w-3xl mx-auto space-y-6">
-        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 pb-4">
-          <div>
-            <p class="text-xs font-semibold uppercase tracking-wider text-wa-600">Automated WhatsApp Dispatch</p>
-            <h2 class="font-display text-2xl font-bold text-gray-950 mt-1">Order <span id="success-order-id" class="font-mono"></span> Received</h2>
-          </div>
-          <span id="success-order-status" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded">Pending WhatsApp Confirmation</span>
-        </div>
-
-        <p class="text-sm text-gray-700">
-          We dispatched an itemized Digital Receipt with <strong>Confirm</strong> and <strong>Cancel</strong> interactive buttons to <strong id="success-whatsapp-num" class="font-mono"></strong>.
-        </p>
-
-        <div class="bg-[#EFEAE2] border border-gray-200 rounded p-4 sm:p-5 space-y-3">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">WhatsApp Interactive Message Preview</p>
-          <pre id="success-receipt-preview" class="whitespace-pre-wrap font-sans text-sm text-gray-900 bg-white border border-gray-200 rounded p-4 leading-relaxed"></pre>
-          <div class="flex flex-wrap gap-3 pt-1">
-            <button id="sim-confirm-order-btn" type="button" class="h-10 px-4 bg-wa-600 hover:bg-wa-700 text-white text-sm font-semibold rounded transition-colors">
-              ✅ Confirm Order (Webhook Reply)
-            </button>
-            <button id="sim-cancel-order-btn" type="button" class="h-10 px-4 bg-white hover:bg-red-50 text-red-700 border border-red-300 text-sm font-semibold rounded transition-colors">
-              ❌ Cancel Order (Webhook Reply)
-            </button>
-          </div>
-          <p id="sim-webhook-reply-banner" class="hidden text-xs font-medium text-gray-800 bg-white border border-emerald-200 rounded p-3"></p>
-        </div>
-
-        <div class="flex flex-wrap gap-3 pt-2">
-          <button id="success-track-btn" type="button" class="h-10 px-5 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded">Track This Order</button>
-          <button id="success-continue-btn" type="button" class="h-10 px-5 border border-gray-300 text-gray-800 text-sm font-semibold rounded hover:bg-gray-50">Continue Shopping</button>
-        </div>
-      </div>
     </section>
 
     <!-- 3. ORDER TRACKING VIEW -->
     <section id="view-track" class="view-section hidden max-w-3xl mx-auto px-4 sm:px-6 py-12">
-      <div class="bg-white border border-gray-200 rounded p-6 sm:p-8 space-y-6">
-        <div>
-          <h1 class="font-display text-2xl font-bold text-gray-950">Track Cash on Delivery Order</h1>
-          <p class="text-sm text-gray-600 mt-1">Enter your Order ID (for example <code class="font-mono text-gray-900">ORD-2026-1041</code>) to check live WhatsApp confirmation and dispatch status.</p>
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p class="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-500">Live COD Order Status</p>
+            <h1 class="font-display text-2xl font-bold text-slate-950 mt-0.5">Track Cash on Delivery Order</h1>
+            <p class="text-sm text-slate-600 mt-1">Enter your full Order ID (<code class="font-mono text-slate-900">ORD-2026-9336</code>) or just the 4-digit code (<code class="font-mono text-slate-900">9336</code>) to check live WhatsApp confirmation and dispatch status.</p>
+          </div>
+          <button type="button" data-nav="store" class="text-sm font-semibold text-slate-700 hover:text-slate-950 underline whitespace-nowrap">Back to Store</button>
         </div>
 
         <form id="track-order-form" class="flex flex-col sm:flex-row gap-3">
-          <input id="track-order-input" required placeholder="Enter Order ID e.g. ORD-2026-1041" class="flex-1 h-11 px-3.5 border border-gray-300 rounded text-sm font-mono uppercase focus:border-brand-500 focus:outline-none" />
-          <button type="submit" class="h-11 px-6 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold rounded shrink-0">Check Status</button>
+          <input id="track-order-input" required placeholder="Enter ORD-2026-9336 or 9336" class="w-full sm:flex-1 h-11 px-3.5 border border-slate-300 rounded-xl text-sm font-mono uppercase focus:border-brand-500 focus:outline-none" />
+          <button type="submit" class="h-11 px-6 bg-slate-950 hover:bg-brand-500 text-white text-sm font-semibold rounded-xl shrink-0 transition-colors">Check Status</button>
         </form>
 
-        <div id="track-order-result" class="hidden border-t border-gray-200 pt-6 space-y-4"></div>
+        <div id="track-order-result" class="hidden border-t border-slate-200 pt-6 space-y-4"></div>
       </div>
     </section>
   </main>
 
-  <!-- Footer -->
-  <footer class="bg-white border-t border-gray-200 mt-auto">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-gray-600">
-      <div>
-        <p class="font-display font-bold text-sm text-gray-950">Al-Mumtaz Electronics — Hasilpur</p>
-        <p class="mt-0.5">Main Railway Road, Hasilpur · Official WhatsApp &amp; Helpline: 03299931199</p>
+  <!-- Detailed Showroom Footer -->
+  <footer class="bg-slate-950 text-slate-300 border-t border-slate-800 mt-auto">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-1 md:grid-cols-12 gap-8">
+      <div class="md:col-span-4 space-y-2.5">
+        <p class="font-display font-extrabold text-xl text-white tracking-tight">Al Mumtaz Electronics</p>
+        <p class="text-xs text-slate-400 leading-relaxed max-w-sm">
+          Authorized electronics &amp; solar appliance showroom serving Hasilpur and nationwide customers with genuine factory-sealed products, official brand warranties, and Cash on Delivery.
+        </p>
       </div>
-      <div class="flex flex-wrap gap-5 font-semibold text-gray-700">
-        <button type="button" data-nav="store" class="hover:text-brand-500">Storefront</button>
-        <button type="button" data-nav="track" class="hover:text-brand-500">Order Tracking</button>
+
+      <div class="md:col-span-3 space-y-2 text-xs">
+        <p class="font-display font-bold text-sm text-white">Contact &amp; Helpline</p>
+        <p class="text-slate-300">
+          Phone &amp; WhatsApp:
+          <a href="tel:03299931199" class="font-mono font-bold text-white hover:text-brand-500 transition-colors">03299931199</a>
+        </p>
+        <p class="text-slate-400 font-mono">+92 329 9931199</p>
+        <p class="text-slate-400">Instant COD confirmation &amp; order tracking on WhatsApp.</p>
+      </div>
+
+      <div class="md:col-span-3 space-y-2 text-xs">
+        <p class="font-display font-bold text-sm text-white">Showroom Location</p>
+        <p class="text-slate-300">Main Railway Road, Hasilpur</p>
+        <p class="text-slate-400">District Bahawalpur, Punjab, Pakistan</p>
+        <p class="text-slate-400">Hours: Mon – Sat, 10:00 AM – 9:30 PM</p>
+        <p class="text-emerald-400 font-semibold">Free Same/Next-Day COD in Hasilpur</p>
+      </div>
+
+      <div class="md:col-span-2 space-y-2 text-xs">
+        <p class="font-display font-bold text-sm text-white">Quick Links</p>
+        <div class="flex flex-col items-start gap-2 font-semibold text-slate-300">
+          <button type="button" data-nav="store" class="hover:text-white transition-colors">Storefront Catalog</button>
+          <button type="button" data-nav="track" class="hover:text-white transition-colors">Track COD Order</button>
+          <button type="button" data-nav="checkout" class="hover:text-white transition-colors">COD Checkout</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="border-t border-slate-800/80">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-slate-400">
+        <span>© 2026 Al Mumtaz Electronics · Main Railway Road, Hasilpur · Helpline: 03299931199</span>
+        <span>Cash on Delivery (COD) · Official Brand Warranty · Sealed-Box Inspection</span>
       </div>
     </div>
   </footer>
 
+  <!-- ANIMATED ORDER CONFIRMATION POP-UP MODAL -->
+  <div id="order-confirmed-popup-modal" role="dialog" aria-modal="true" aria-labelledby="popup-order-title" class="hidden fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4 animate-modal-backdrop">
+    <div class="relative bg-white rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 text-center space-y-5 animate-modal-card">
+      <button id="popup-close-btn" type="button" aria-label="Close order confirmation" class="absolute right-4 top-4 w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-600 text-sm font-bold">
+        ✕
+      </button>
+
+      <!-- Animated Checkmark Emblem -->
+      <div class="relative mx-auto w-16 h-16 flex items-center justify-center">
+        <span class="absolute inset-0 rounded-full bg-emerald-400/30 animate-ring-expand"></span>
+        <div class="relative w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+          <svg class="w-8 h-8 text-wa-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6">
+            <path class="animate-check-stroke" stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <p class="text-[11px] font-bold uppercase tracking-[0.14em] text-wa-600">
+          Order Placed · Waiting for WhatsApp
+        </p>
+        <h2 id="popup-order-title" class="font-display text-2xl font-extrabold text-slate-950">
+          Your order has been confirmed
+        </h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Your order is now <strong class="text-slate-900">waiting for WhatsApp confirmation</strong>. Please check WhatsApp on <strong id="popup-whatsapp-num" class="font-mono text-slate-950"></strong> to approve dispatch.
+        </p>
+      </div>
+
+      <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 text-left space-y-2.5 text-xs">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-slate-500 font-medium">Order Reference</span>
+          <div class="flex items-center gap-2">
+            <span id="popup-order-id" class="font-mono font-bold text-slate-950">#ORD-2026-0000</span>
+            <button
+              id="popup-copy-order-btn"
+              type="button"
+              class="h-7 px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-semibold text-[11px] inline-flex items-center gap-1 transition-colors whitespace-nowrap shrink-0"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-slate-500 font-medium">COD Grand Total</span>
+          <span id="popup-order-total" class="tabular-nums font-bold text-brand-500 text-sm">Rs. 0</span>
+        </div>
+        <div class="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200">
+          <span class="text-slate-500 font-medium">Current Status</span>
+          <span id="popup-order-status" class="font-semibold text-amber-700">Waiting for WhatsApp Confirmation</span>
+        </div>
+        <p id="popup-track-hint" class="text-[11px] text-slate-500 pt-1">
+          Track anytime on Website or WhatsApp using <span class="font-mono font-semibold text-slate-800" id="popup-short-code">0000</span> or full Order ID.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+        <button id="popup-track-btn" type="button" class="h-11 px-4 bg-slate-950 hover:bg-slate-800 text-white text-sm font-semibold rounded-xl transition-colors whitespace-nowrap">
+          Track Order
+        </button>
+        <button id="popup-continue-btn" type="button" class="h-11 px-4 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 text-sm font-semibold rounded-xl transition-colors whitespace-nowrap">
+          Continue Shopping
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- PRODUCT DETAIL MODAL (PDP) -->
-  <div id="pdp-modal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-white rounded max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-gray-200 relative">
-      <button id="pdp-close-btn" type="button" aria-label="Close product details" class="absolute right-4 top-4 w-9 h-9 rounded border border-gray-200 bg-white hover:bg-gray-100 flex items-center justify-center text-gray-700 font-bold z-10">
+  <div id="pdp-modal" class="hidden fixed inset-0 z-50 bg-slate-950/55 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-200 relative">
+      <button id="pdp-close-btn" type="button" aria-label="Close product details" class="absolute right-4 top-4 w-9 h-9 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700 font-bold z-10">
         ✕
       </button>
       <div id="pdp-modal-body" class="p-6 sm:p-8"></div>
     </div>
   </div>
 
-  <!-- SLIDE-OVER SHOPPING CART DRAWER -->
-  <div id="cart-drawer-backdrop" class="hidden fixed inset-0 z-50 bg-black/45 flex justify-end">
-    <aside class="w-full max-w-md bg-white h-full flex flex-col shadow-2xl border-l border-gray-200">
-      <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-        <h2 class="font-display text-lg font-bold text-gray-950">Shopping Cart</h2>
-        <button id="close-cart-btn" type="button" class="text-sm font-semibold text-gray-500 hover:text-gray-900 px-2 py-1">Close ✕</button>
+  <!-- SLIDE-OVER SHOPPING BAG DRAWER -->
+  <div id="cart-drawer-backdrop" class="hidden fixed inset-0 z-50 bg-slate-950/45 flex justify-end">
+    <aside class="w-full max-w-md bg-white h-full flex flex-col shadow-2xl border-l border-slate-200">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold text-slate-950">Order Bag</h2>
+        <button id="close-cart-btn" type="button" class="text-sm font-semibold text-slate-500 hover:text-slate-900 px-2 py-1">Close ✕</button>
       </div>
       <div id="cart-drawer-items" class="flex-1 overflow-y-auto p-5 space-y-4"></div>
-      <div class="p-5 border-t border-gray-200 bg-gray-50 space-y-3">
-        <div class="flex justify-between text-sm text-gray-600">
+      <div class="p-5 border-t border-slate-200 bg-slate-50 space-y-3">
+        <div class="flex justify-between text-sm text-slate-600">
           <span>Items Subtotal</span>
-          <span id="cart-drawer-subtotal" class="tabular-nums font-bold text-gray-950">Rs. 0</span>
+          <span id="cart-drawer-subtotal" class="tabular-nums font-bold text-slate-950">Rs. 0</span>
         </div>
-        <p class="text-xs text-gray-500">Delivery fees &amp; Cash on Delivery options are calculated at checkout.</p>
-        <button id="proceed-checkout-btn" type="button" class="w-full h-11 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-sm rounded transition-colors">
+        <p class="text-xs text-slate-500">Delivery fees &amp; Cash on Delivery options are calculated at checkout.</p>
+        <button id="proceed-checkout-btn" type="button" class="w-full h-11 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-sm rounded-xl transition-colors">
           Proceed to COD Checkout
         </button>
       </div>

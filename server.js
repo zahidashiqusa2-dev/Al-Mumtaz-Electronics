@@ -12,14 +12,16 @@ const axios = require('axios');
 const cookie = require('cookie');
 const multer = require('multer');
 const dotenv = require('dotenv');
-dotenv.config({ override: true });
+dotenv.config();
 
 const database = require('./lib/database');
 const mediaStore = require('./lib/mediaStore');
 const { getVolumeDiagnostics } = require('./lib/storagePaths');
 const {
+    ALLOWED_ORDER_STATUSES,
     normalizePakistanWhatsApp,
     calculateOrderTotals,
+    resolveProductVariantPrice,
     generateOrderId,
     verifyAdminCredentials,
     generateAdminToken,
@@ -29,7 +31,9 @@ const whatsappService = require('./lib/whatsappService');
 const sessionManager = require('./lib/sessionManager');
 
 const app = express();
-const PORT = process.env.NGINX_PORT ? 3000 : (Number(process.env.PORT) || 3000);
+const PORT = process.env.NGINX_PORT
+    ? (Number(process.env.DEFAULT_APP_PORT) || 3000)
+    : (Number(process.env.PORT) || 3000);
 const HOST = '0.0.0.0';
 
 const upload = multer({
@@ -251,14 +255,15 @@ app.post('/api/orders/estimate', (req, res) => {
         const { config } = database.getAllVariables();
         const hydratedItems = items.map((item) => {
             const dbProd = item.productId ? database.getProductBySlugOrId(item.productId) : null;
+            const resolved = dbProd ? resolveProductVariantPrice(dbProd, item.variant) : null;
             return {
                 productId: dbProd ? dbProd.id : Number(item.productId) || 0,
                 title: dbProd ? dbProd.title : item.title,
                 sku: dbProd ? dbProd.sku : item.sku,
-                variant: item.variant || '',
+                variant: resolved ? resolved.variant : (item.variant || ''),
                 quantity: item.quantity || 1,
-                originalPrice: dbProd ? dbProd.originalPrice : item.originalPrice,
-                discountPrice: dbProd ? dbProd.discountPrice : item.discountPrice,
+                originalPrice: resolved ? resolved.originalPrice : item.originalPrice,
+                discountPrice: resolved ? resolved.discountPrice : item.discountPrice,
                 image: dbProd ? dbProd.images[0] : item.image
             };
         });
@@ -306,18 +311,20 @@ app.post('/api/orders/checkout', async (req, res) => {
             if (!dbProd) {
                 throw new Error(`Product "${item.title || item.productId}" is no longer available.`);
             }
+            const resolved = resolveProductVariantPrice(dbProd, item.variant);
             const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
-            if (dbProd.stock > 0 && qty > dbProd.stock) {
-                throw new Error(`Only ${dbProd.stock} unit(s) left in stock for ${dbProd.title}.`);
+            const availableStock = resolved.stock > 0 ? resolved.stock : dbProd.stock;
+            if (availableStock > 0 && qty > availableStock) {
+                throw new Error(`Only ${availableStock} unit(s) left in stock for ${dbProd.title}${resolved.variant ? ` (${resolved.variant})` : ''}.`);
             }
             return {
                 productId: dbProd.id,
                 title: dbProd.title,
                 sku: dbProd.sku,
-                variant: item.variant || dbProd.variants?.[0] || '',
+                variant: resolved.variant || dbProd.variants?.[0] || '',
                 quantity: qty,
-                originalPrice: dbProd.originalPrice,
-                discountPrice: dbProd.discountPrice,
+                originalPrice: resolved.originalPrice,
+                discountPrice: resolved.discountPrice,
                 image: dbProd.images[0] || ''
             };
         });
@@ -369,7 +376,7 @@ app.post('/api/orders/checkout', async (req, res) => {
 app.get('/api/orders/track/:orderId', (req, res) => {
     const order = database.getOrderById(req.params.orderId);
     if (!order) {
-        return res.status(404).json({ error: 'Order not found. Please verify your Order ID (e.g. ORD-2026-1041).' });
+        return res.status(404).json({ error: 'Order not found. Please enter your Order ID (e.g. ORD-2026-9336 or 9336).' });
     }
     res.json({ order });
 });
@@ -496,6 +503,7 @@ app.get('/api/admin/overview', requireAdminAuth, async (req, res) => {
     res.json({
         adminUser: req.adminUser.username,
         stats: database.getStatsSummary(),
+        analytics: database.getAnalyticsReport(),
         products: database.getProducts({ sort: 'newest' }),
         categories: database.getCategories(),
         orders: database.getOrders(200),
@@ -506,6 +514,15 @@ app.get('/api/admin/overview', requireAdminAuth, async (req, res) => {
         mediaDiagnostics: mediaDiag,
         uploadedImages,
         whatsappStatus
+    });
+});
+
+app.get('/api/admin/analytics', requireAdminAuth, (req, res) => {
+    res.json({
+        analytics: database.getAnalyticsReport({
+            category: req.query.category || 'all',
+            status: req.query.status || 'all'
+        })
     });
 });
 
@@ -583,8 +600,7 @@ app.delete('/api/admin/categories/:id', requireAdminAuth, (req, res) => {
 app.patch('/api/admin/orders/:orderId/status', requireAdminAuth, (req, res) => {
     try {
         const { status } = req.body || {};
-        const allowed = ['Pending WhatsApp Confirmation', 'Confirmed', 'Shipped', 'Delivered', 'Cancelled'];
-        if (!allowed.includes(status)) {
+        if (!ALLOWED_ORDER_STATUSES.includes(status)) {
             return res.status(400).json({ error: 'Invalid order status.' });
         }
         const order = database.updateOrderStatus(req.params.orderId, status);

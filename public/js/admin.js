@@ -7,15 +7,25 @@
     const adminState = {
         authenticated: false,
         username: '',
-        activeTab: 'orders',
+        activeTab: 'dashboard',
         overview: null,
+        filteredAnalytics: null,
+        analyticsMode: 'all',
+        analyticsCategory: 'all',
+        analyticsStatus: 'all',
         editingProductId: null,
         productImages: [],
         orderSearch: '',
         orderStatusFilter: 'all',
+        orderCategoryFilter: 'all',
         pendingDeleteOrderId: null,
         pendingDeleteProductId: null,
-        pendingDeleteImageId: null
+        pendingDeleteImageId: null,
+        navOpen: false,
+        navSearch: '',
+        activeNavId: 'dashboard',
+        productLowStockOnly: false,
+        productVariants: [{ name: 'Standard', originalPrice: '', discountPrice: '', stock: '' }]
     };
 
     function getStoredToken() {
@@ -99,20 +109,24 @@
         if (!grid) return;
 
         const cards = [
-            { label: 'Total Revenue', value: formatPkr(stats.totalRevenue || 0) },
-            { label: 'Total Orders', value: stats.totalOrders || 0 },
-            { label: 'Confirmed COD', value: stats.confirmedOrders || 0 },
-            { label: 'Pending WhatsApp', value: stats.pendingOrders || 0 },
-            { label: 'Catalog Products', value: stats.totalProducts || 0 },
-            { label: 'Customer Inquiries', value: stats.totalInquiries || 0 }
+            { label: 'Total Revenue', value: formatPkr(stats.totalRevenue || 0), navId: 'analytics-all', accent: 'text-slate-950' },
+            { label: 'Total Orders', value: stats.totalOrders || 0, navId: 'orders-all', accent: 'text-slate-950' },
+            { label: 'Confirmed COD', value: stats.confirmedOrders || 0, navId: 'orders-confirmed', accent: 'text-emerald-700' },
+            { label: 'Pending WhatsApp', value: stats.pendingOrders || 0, navId: 'orders-pending', accent: 'text-amber-700' },
+            { label: 'Catalog Products', value: stats.totalProducts || 0, navId: 'products-inventory', accent: 'text-slate-950' },
+            { label: 'Customer Inquiries', value: stats.totalInquiries || 0, navId: 'wa-inquiries', accent: 'text-brand-600' }
         ];
 
         grid.innerHTML = cards.map((c) => `
-            <div class="bg-white border border-gray-200 rounded p-4">
-                <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">${escapeHtml(c.label)}</p>
-                <p class="font-display text-xl font-extrabold text-gray-950 tabular-nums mt-1">${escapeHtml(String(c.value))}</p>
-            </div>
+            <button type="button" data-kpi-nav="${escapeHtml(c.navId)}" class="admin-kpi-card bg-white border border-slate-200 hover:border-brand-500 rounded-xl p-4 text-left transition-colors group">
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-500 group-hover:text-brand-600 transition-colors">${escapeHtml(c.label)}</p>
+                <p class="font-display text-xl font-extrabold ${c.accent} tabular-nums mt-1.5">${escapeHtml(String(c.value))}</p>
+            </button>
         `).join('');
+
+        grid.querySelectorAll('.admin-kpi-card').forEach((btn) => {
+            btn.addEventListener('click', () => executeAdminNavAction(btn.dataset.kpiNav));
+        });
     }
 
     function openOrderDetailModal(order) {
@@ -123,6 +137,8 @@
         const badgeClass =
             order.orderStatus === 'Confirmed' || order.orderStatus === 'Delivered'
                 ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : order.orderStatus === 'Dispatched' || order.orderStatus === 'Shipped'
+                ? 'bg-sky-50 text-sky-800 border-sky-200'
                 : order.orderStatus === 'Cancelled'
                 ? 'bg-red-50 text-red-700 border-red-200'
                 : 'bg-amber-50 text-amber-800 border-amber-200';
@@ -198,13 +214,37 @@
         modal.classList.remove('hidden');
     }
 
+    function getOrderCategorySlugs(order, products = []) {
+        const byId = new Map(products.map((p) => [Number(p.id), p.categorySlug]));
+        const bySku = new Map(products.map((p) => [String(p.sku || '').toUpperCase(), p.categorySlug]));
+        const slugs = new Set();
+        for (const item of order.items || []) {
+            const slug = item.categorySlug || byId.get(Number(item.productId)) || bySku.get(String(item.sku || '').toUpperCase());
+            if (slug) slugs.add(slug);
+        }
+        return slugs;
+    }
+
     function renderOrdersTab(container) {
         const allOrders = adminState.overview?.orders || [];
+        const products = adminState.overview?.products || [];
+        const categories = adminState.overview?.categories || [];
         const q = adminState.orderSearch.trim().toLowerCase();
         const statusFilter = adminState.orderStatusFilter;
+        const catFilter = adminState.orderCategoryFilter;
 
         const filtered = allOrders.filter((o) => {
-            if (statusFilter !== 'all' && o.orderStatus !== statusFilter) return false;
+            if (statusFilter !== 'all') {
+                if (statusFilter === 'Dispatched') {
+                    if (o.orderStatus !== 'Dispatched' && o.orderStatus !== 'Shipped') return false;
+                } else if (o.orderStatus !== statusFilter) {
+                    return false;
+                }
+            }
+            if (catFilter !== 'all') {
+                const slugs = getOrderCategorySlugs(o, products);
+                if (!slugs.has(catFilter)) return false;
+            }
             if (!q) return true;
             return (
                 String(o.orderId || '').toLowerCase().includes(q) ||
@@ -214,6 +254,8 @@
             );
         });
 
+        const statusOptions = ['Pending WhatsApp Confirmation', 'Confirmed', 'Dispatched', 'Delivered', 'Cancelled'];
+
         container.innerHTML = `
             <div class="bg-white border border-gray-200 rounded overflow-hidden">
                 <div class="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
@@ -222,10 +264,16 @@
                         <p class="text-xs text-gray-500">Search, inspect receipts, manage status, trigger WhatsApp actions, or delete orders.</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
-                        <input id="orders-search-input" type="search" value="${escapeHtml(adminState.orderSearch)}" placeholder="Search Order ID, name, phone, city..." class="h-9 px-3 border border-gray-300 rounded text-xs w-56 focus:border-brand-500 focus:outline-none" />
-                        <select id="orders-status-filter" class="h-9 px-2.5 border border-gray-300 rounded text-xs bg-white">
+                        <input id="orders-search-input" type="search" value="${escapeHtml(adminState.orderSearch)}" placeholder="Search Order ID, name, phone, city..." class="h-9 px-3 border border-gray-300 rounded text-xs w-52 focus:border-brand-500 focus:outline-none" />
+                        <select id="orders-category-filter" aria-label="Filter orders by category" class="h-9 px-2.5 border border-gray-300 rounded text-xs bg-white">
+                            <option value="all" ${catFilter === 'all' ? 'selected' : ''}>All Categories</option>
+                            ${categories.map((c) =>
+                                `<option value="${escapeHtml(c.slug)}" ${catFilter === c.slug ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+                            ).join('')}
+                        </select>
+                        <select id="orders-status-filter" aria-label="Filter orders by status" class="h-9 px-2.5 border border-gray-300 rounded text-xs bg-white">
                             <option value="all" ${statusFilter === 'all' ? 'selected' : ''}>All Statuses</option>
-                            ${['Pending WhatsApp Confirmation', 'Confirmed', 'Shipped', 'Delivered', 'Cancelled'].map((st) =>
+                            ${statusOptions.map((st) =>
                                 `<option value="${st}" ${statusFilter === st ? 'selected' : ''}>${st}</option>`
                             ).join('')}
                         </select>
@@ -252,10 +300,15 @@
                                     const badgeClass =
                                         o.orderStatus === 'Confirmed' || o.orderStatus === 'Delivered'
                                             ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                            : o.orderStatus === 'Dispatched' || o.orderStatus === 'Shipped'
+                                            ? 'bg-sky-50 text-sky-800 border-sky-200'
                                             : o.orderStatus === 'Cancelled'
                                             ? 'bg-red-50 text-red-700 border-red-200'
                                             : 'bg-amber-50 text-amber-800 border-amber-200';
                                     const confirmPending = adminState.pendingDeleteOrderId === o.orderId;
+                                    const rowStatusList = o.orderStatus === 'Shipped'
+                                        ? [...statusOptions, 'Shipped']
+                                        : statusOptions;
                                     return `
                                         <tr class="hover:bg-gray-50/70">
                                             <td class="px-4 py-3 font-mono font-bold text-gray-900 whitespace-nowrap">#${escapeHtml(o.orderId)}</td>
@@ -271,7 +324,7 @@
                                             <td class="px-4 py-3 font-bold tabular-nums whitespace-nowrap text-gray-950">${formatPkr(o.grandTotal)}</td>
                                             <td class="px-4 py-3">
                                                 <select data-order-status="${escapeHtml(o.orderId)}" class="order-status-select h-8 px-2 border rounded text-xs font-semibold ${badgeClass}">
-                                                    ${['Pending WhatsApp Confirmation', 'Confirmed', 'Shipped', 'Delivered', 'Cancelled'].map((st) =>
+                                                    ${rowStatusList.map((st) =>
                                                         `<option value="${st}" ${o.orderStatus === st ? 'selected' : ''}>${st}</option>`
                                                     ).join('')}
                                                 </select>
@@ -306,6 +359,11 @@
                 refreshed.focus();
                 refreshed.setSelectionRange(refreshed.value.length, refreshed.value.length);
             }
+        });
+
+        document.getElementById('orders-category-filter')?.addEventListener('change', (e) => {
+            adminState.orderCategoryFilter = e.target.value;
+            renderOrdersTab(container);
         });
 
         document.getElementById('orders-status-filter')?.addEventListener('change', (e) => {
@@ -483,6 +541,93 @@
         }
     }
 
+    function renderVariantPricingRows() {
+        const wrap = document.getElementById('prod-variants-rows');
+        if (!wrap) return;
+        const rows = Array.isArray(adminState.productVariants) && adminState.productVariants.length > 0
+            ? adminState.productVariants
+            : [{ name: 'Standard', originalPrice: '', discountPrice: '', stock: '' }];
+        adminState.productVariants = rows;
+
+        wrap.innerHTML = rows.map((v, idx) => `
+            <div class="bg-white border border-gray-200 rounded p-2.5 space-y-2">
+                <div class="flex items-center gap-1.5">
+                    <div class="flex-1 min-w-0">
+                        <label class="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">Variant Name</label>
+                        <input
+                            type="text"
+                            data-var-idx="${idx}"
+                            data-var-field="name"
+                            value="${escapeHtml(v.name || '')}"
+                            placeholder="e.g. 55-Inch QLED"
+                            class="var-row-input w-full h-8 px-2.5 border border-gray-300 rounded text-xs"
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        data-var-remove="${idx}"
+                        ${rows.length <= 1 ? 'disabled' : ''}
+                        aria-label="Remove variant"
+                        class="var-row-remove mt-4 w-7 h-8 rounded text-xs font-bold shrink-0 ${rows.length <= 1 ? 'text-gray-300 cursor-not-allowed' : 'text-red-600 hover:bg-red-50'}"
+                    >×</button>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <div>
+                        <label class="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">Original (PKR)</label>
+                        <input
+                            type="number"
+                            data-var-idx="${idx}"
+                            data-var-field="originalPrice"
+                            value="${escapeHtml(v.originalPrice ?? '')}"
+                            placeholder="150000"
+                            class="var-row-input w-full h-8 px-2 border border-gray-300 rounded text-xs tabular-nums"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">Sale (PKR)</label>
+                        <input
+                            type="number"
+                            data-var-idx="${idx}"
+                            data-var-field="discountPrice"
+                            value="${escapeHtml(v.discountPrice ?? '')}"
+                            placeholder="125000"
+                            class="var-row-input w-full h-8 px-2 border border-gray-300 rounded text-xs tabular-nums"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">Stock</label>
+                        <input
+                            type="number"
+                            data-var-idx="${idx}"
+                            data-var-field="stock"
+                            value="${escapeHtml(v.stock ?? '')}"
+                            placeholder="10"
+                            class="var-row-input w-full h-8 px-2 border border-gray-300 rounded text-xs tabular-nums"
+                        />
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        wrap.querySelectorAll('.var-row-input').forEach((inp) => {
+            inp.addEventListener('input', () => {
+                const idx = Number(inp.dataset.varIdx);
+                const field = inp.dataset.varField;
+                if (adminState.productVariants[idx]) {
+                    adminState.productVariants[idx][field] = inp.value;
+                }
+            });
+        });
+
+        wrap.querySelectorAll('.var-row-remove').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                if (adminState.productVariants.length <= 1) return;
+                adminState.productVariants.splice(Number(btn.dataset.varRemove), 1);
+                renderVariantPricingRows();
+            });
+        });
+    }
+
     function renderProductsTab(container) {
         const products = adminState.overview?.products || [];
         const categories = adminState.overview?.categories || [];
@@ -491,6 +636,9 @@
         const editing = adminState.editingProductId
             ? products.find((p) => p.id === adminState.editingProductId)
             : null;
+        const visibleProducts = adminState.productLowStockOnly
+            ? products.filter((p) => Number(p.stock) <= 12)
+            : products;
 
         const studioImages = [
             { label: '4K QLED Smart TV', url: '/images/product_qled_tv.jpg' },
@@ -501,17 +649,17 @@
         ];
 
         const backendBadge = mediaDiag.activeBackend === 'cloudinary'
-            ? `<span class="px-2.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">Cloudinary CDN Active (${escapeHtml(mediaDiag.cloudinaryCloudName || 'connected')})</span>`
-            : '<span class="px-2.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">SQLite Media Fallback (Set Cloudinary_URI in Variables for Cloud CDN)</span>';
+            ? `<span class="inline-block px-2.5 py-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold leading-snug">Cloudinary CDN Active (${escapeHtml(mediaDiag.cloudinaryCloudName || 'connected')})</span>`
+            : '<span class="inline-block px-2.5 py-1 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold leading-snug">SQLite Media Fallback (Set Cloudinary_URI in Variables for Cloud CDN)</span>';
 
         container.innerHTML = `
             <div class="space-y-6">
-                <div class="bg-white border border-gray-200 rounded px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
-                    <div class="text-xs text-gray-700">
+                <div class="bg-white border border-gray-200 rounded px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-2.5">
+                    <div class="text-xs text-gray-700 flex flex-wrap items-center gap-2 min-w-0">
                         <span class="font-bold text-gray-950">Direct Multi-Image Storage Engine:</span>
-                        <span class="ml-1.5">${backendBadge}</span>
+                        ${backendBadge}
                     </div>
-                    <span class="text-xs text-gray-500 tabular-nums">
+                    <span class="text-xs text-gray-500 tabular-nums shrink-0">
                         Uploaded Media Files: <strong>${uploadedImages.length}</strong>
                     </span>
                 </div>
@@ -599,9 +747,18 @@
                                 </div>
                             </div>
 
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-700 mb-1">Variants (comma-separated)</label>
-                                <input name="variants" value="${escapeHtml((editing?.variants || ['Standard']).join(', '))}" class="w-full h-9 px-3 border border-gray-300 rounded text-sm" />
+                            <!-- Dynamic Variants & Per-Variant Pricing -->
+                            <div id="admin-variants-box" class="border border-gray-200 rounded p-3.5 bg-gray-50/70 space-y-2.5">
+                                <div class="flex items-center justify-between gap-2">
+                                    <div>
+                                        <p class="text-xs font-bold text-gray-900">Variants &amp; Per-Variant Prices (PKR)</p>
+                                        <p class="text-[11px] text-gray-500">Set different Original &amp; Sale prices and stock for each variant.</p>
+                                    </div>
+                                    <button id="add-variant-row-btn" type="button" class="h-7 px-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded text-[11px] font-semibold whitespace-nowrap">
+                                        + Add Variant Price
+                                    </button>
+                                </div>
+                                <div id="prod-variants-rows" class="space-y-2"></div>
                             </div>
 
                             <div>
@@ -643,25 +800,35 @@
                     </div>
 
                     <!-- Product Catalog Table + Uploaded Images Gallery -->
-                    <div class="lg:col-span-7 space-y-6">
+                    <div id="admin-catalog-inventory-box" class="lg:col-span-7 space-y-6">
                         <div class="bg-white border border-gray-200 rounded overflow-hidden">
-                            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                                <h3 class="font-display font-bold text-base text-gray-950">Catalog Inventory (${products.length})</h3>
+                            <div class="px-5 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+                                <h3 class="font-display font-bold text-base text-gray-950">
+                                    Catalog Inventory (${visibleProducts.length}${adminState.productLowStockOnly ? ' Low Stock' : ''})
+                                </h3>
+                                <button id="toggle-low-stock-btn" type="button" class="h-8 px-3 rounded text-xs font-semibold border ${adminState.productLowStockOnly ? 'bg-amber-600 text-white border-amber-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}">
+                                    ${adminState.productLowStockOnly ? 'Showing Low Stock (≤12) · Show All' : 'Low Stock Alerts (≤12)'}
+                                </button>
                             </div>
                             <div class="overflow-x-auto">
                                 <table class="w-full text-left text-xs">
                                     <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 uppercase">
                                         <tr>
                                             <th class="px-4 py-3 font-semibold">Product</th>
-                                            <th class="px-4 py-3 font-semibold">Sale / Orig</th>
+                                            <th class="px-4 py-3 font-semibold">Sale / Orig &amp; Variants</th>
                                             <th class="px-4 py-3 font-semibold">Stock</th>
                                             <th class="px-4 py-3 font-semibold">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-gray-100">
-                                        ${products.map((p) => {
+                                        ${visibleProducts.map((p) => {
                                             const confirmDel = adminState.pendingDeleteProductId === p.id;
                                             const imgCount = (p.images || []).length;
+                                            const vOpts = Array.isArray(p.variantOptions) ? p.variantOptions : [];
+                                            const prices = vOpts.map((v) => Number(v.discountPrice)).filter((n) => n > 0);
+                                            const minP = prices.length ? Math.min(...prices) : p.discountPrice;
+                                            const maxP = prices.length ? Math.max(...prices) : p.discountPrice;
+                                            const hasRange = prices.length > 1 && minP !== maxP;
                                             return `
                                                 <tr>
                                                     <td class="px-4 py-3">
@@ -674,11 +841,17 @@
                                                         </div>
                                                     </td>
                                                     <td class="px-4 py-3 tabular-nums">
-                                                        <p class="font-bold text-brand-500">${formatPkr(p.discountPrice)} (-${p.discountPercentage}%)</p>
+                                                        <p class="font-bold text-brand-500">
+                                                            ${hasRange ? `${formatPkr(minP)} – ${formatPkr(maxP)}` : `${formatPkr(p.discountPrice)} (-${p.discountPercentage}%)`}
+                                                        </p>
                                                         <p class="text-gray-400 line-through">${formatPkr(p.originalPrice)}</p>
+                                                        ${vOpts.length > 1 ? `<p class="text-[10px] text-gray-500 font-medium">${vOpts.length} variants configured</p>` : ''}
                                                     </td>
-                                                    <td class="px-4 py-3 tabular-nums font-semibold">${p.stock}</td>
+                                                    <td class="px-4 py-3 tabular-nums font-semibold">
+                                                        <span class="${Number(p.stock) <= 10 ? 'text-amber-700 font-bold' : 'text-gray-900'}">${p.stock}</span>
+                                                    </td>
                                                     <td class="px-4 py-3 whitespace-nowrap space-x-2">
+                                                        <button type="button" data-restock-prod="${p.id}" class="restock-prod-btn text-emerald-700 font-semibold hover:underline">+5 Stock</button>
                                                         <button type="button" data-edit-prod="${p.id}" class="edit-prod-btn text-gray-800 font-semibold hover:underline">Edit</button>
                                                         <button type="button" data-del-prod="${p.id}" class="del-prod-btn font-semibold ${confirmDel ? 'px-2 py-0.5 bg-red-600 text-white rounded' : 'text-red-600 hover:underline'}">
                                                             ${confirmDel ? 'Confirm Del' : 'Delete'}
@@ -686,7 +859,7 @@
                                                     </td>
                                                 </tr>
                                             `;
-                                        }).join('')}
+                                        }).join('') || '<tr><td colspan="4" class="p-6 text-center text-gray-500">No products match this inventory filter.</td></tr>'}
                                     </tbody>
                                 </table>
                             </div>
@@ -729,6 +902,45 @@
         `;
 
         renderProductImagePreviewGrid();
+        renderVariantPricingRows();
+
+        document.getElementById('add-variant-row-btn')?.addEventListener('click', () => {
+            const form = document.getElementById('admin-product-form');
+            const origVal = form?.querySelector('input[name="originalPrice"]')?.value || '';
+            const discVal = form?.querySelector('input[name="discountPrice"]')?.value || '';
+            const stockVal = form?.querySelector('input[name="stock"]')?.value || '';
+            adminState.productVariants.push({
+                name: '',
+                originalPrice: origVal,
+                discountPrice: discVal,
+                stock: stockVal
+            });
+            renderVariantPricingRows();
+        });
+
+        document.getElementById('toggle-low-stock-btn')?.addEventListener('click', () => {
+            adminState.productLowStockOnly = !adminState.productLowStockOnly;
+            renderProductsTab(container);
+        });
+
+        container.querySelectorAll('.restock-prod-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const pid = Number(btn.dataset.restockProd);
+                const prod = products.find((p) => p.id === pid);
+                if (!prod) return;
+                const nextStock = (Number(prod.stock) || 0) + 5;
+                try {
+                    await adminRequest(`/api/admin/products/${pid}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ stock: nextStock })
+                    });
+                    toast(`Updated ${prod.title} stock to ${nextStock}`);
+                    await loadAdminOverview();
+                } catch (err) {
+                    toast(err.message, true);
+                }
+            });
+        });
 
         const fileInput = document.getElementById('prod-images-input');
         const dropzone = document.getElementById('prod-image-dropzone');
@@ -805,6 +1017,7 @@
         document.getElementById('cancel-edit-prod')?.addEventListener('click', () => {
             adminState.editingProductId = null;
             adminState.productImages = [];
+            adminState.productVariants = [{ name: 'Standard', originalPrice: '', discountPrice: '', stock: '' }];
             renderProductsTab(container);
         });
 
@@ -815,17 +1028,43 @@
                 ? adminState.productImages
                 : ['/images/product_qled_tv.jpg'];
 
+            const baseOrig = Number(fd.get('originalPrice'));
+            const baseDisc = Number(fd.get('discountPrice'));
+            const baseStock = Number(fd.get('stock'));
+
+            const domVariantRows = Array.from(document.querySelectorAll('#prod-variants-rows > div')).map((rowEl) => ({
+                name: rowEl.querySelector('[data-var-field="name"]')?.value || '',
+                originalPrice: rowEl.querySelector('[data-var-field="originalPrice"]')?.value || '',
+                discountPrice: rowEl.querySelector('[data-var-field="discountPrice"]')?.value || '',
+                stock: rowEl.querySelector('[data-var-field="stock"]')?.value ?? ''
+            }));
+            const variantSource = domVariantRows.length > 0 ? domVariantRows : (adminState.productVariants || []);
+
+            const cleanedVariants = variantSource
+                .map((v) => ({
+                    name: String(v.name || '').trim(),
+                    originalPrice: Number(v.originalPrice) > 0 ? Number(v.originalPrice) : baseOrig,
+                    discountPrice: Number(v.discountPrice) > 0 ? Number(v.discountPrice) : baseDisc,
+                    stock: v.stock !== '' && v.stock !== undefined ? Math.max(0, parseInt(v.stock, 10) || 0) : baseStock
+                }))
+                .filter((v) => v.name);
+
+            const finalVariants = cleanedVariants.length > 0
+                ? cleanedVariants
+                : [{ name: 'Standard', originalPrice: baseOrig, discountPrice: baseDisc, stock: baseStock }];
+
             const payload = {
                 title: fd.get('title'),
                 categorySlug: fd.get('categorySlug'),
                 sku: fd.get('sku'),
-                originalPrice: Number(fd.get('originalPrice')),
-                discountPrice: Number(fd.get('discountPrice')),
-                stock: Number(fd.get('stock')),
+                originalPrice: baseOrig,
+                discountPrice: baseDisc,
+                stock: baseStock,
                 brand: fd.get('brand'),
                 images: finalImages,
                 image: finalImages[0],
-                variants: fd.get('variants'),
+                variants: finalVariants.map((v) => v.name),
+                variantPricing: finalVariants,
                 tags: fd.get('tags'),
                 description: fd.get('description'),
                 isFeatured: fd.get('isFeatured') === 'on',
@@ -838,16 +1077,17 @@
                         method: 'PUT',
                         body: JSON.stringify(payload)
                     });
-                    toast('Product updated with multi-image gallery');
+                    toast('Product & variant prices updated');
                     adminState.editingProductId = null;
                 } else {
                     await adminRequest('/api/admin/products', {
                         method: 'POST',
                         body: JSON.stringify(payload)
                     });
-                    toast('Product added to catalog');
+                    toast('Product added with variant prices');
                 }
                 adminState.productImages = [];
+                adminState.productVariants = [{ name: 'Standard', originalPrice: '', discountPrice: '', stock: '' }];
                 await loadAdminOverview();
             } catch (err) {
                 toast(err.message, true);
@@ -875,6 +1115,28 @@
                 const prod = products.find((p) => p.id === pid);
                 adminState.editingProductId = pid;
                 adminState.productImages = [...(prod?.images || [])];
+                if (Array.isArray(prod?.variantOptions) && prod.variantOptions.length > 0) {
+                    adminState.productVariants = prod.variantOptions.map((v) => ({
+                        name: v.name,
+                        originalPrice: v.originalPrice ?? prod.originalPrice,
+                        discountPrice: v.discountPrice ?? prod.discountPrice,
+                        stock: v.stock ?? prod.stock
+                    }));
+                } else if (Array.isArray(prod?.variants) && prod.variants.length > 0) {
+                    adminState.productVariants = prod.variants.map((v) => ({
+                        name: v,
+                        originalPrice: prod.originalPrice,
+                        discountPrice: prod.discountPrice,
+                        stock: prod.stock
+                    }));
+                } else {
+                    adminState.productVariants = [{
+                        name: 'Standard',
+                        originalPrice: prod?.originalPrice || '',
+                        discountPrice: prod?.discountPrice || '',
+                        stock: prod?.stock ?? ''
+                    }];
+                }
                 renderProductsTab(container);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             });
@@ -1324,31 +1586,878 @@
         });
     }
 
-    function updateWaHeaderPill(ws = {}) {
-        const pill = document.getElementById('admin-wa-link-pill');
-        if (!pill) return;
-        const connected = ws.connectedSessions || [];
-        if (connected.length > 0) {
-            pill.textContent = `WhatsApp Linked (+${connected[0]})`;
-            pill.className = 'h-9 px-3 border border-emerald-300 bg-emerald-50 text-emerald-800 rounded text-xs font-semibold hover:bg-emerald-100';
-        } else {
-            pill.textContent = 'Link WhatsApp';
-            pill.className = 'h-9 px-3 border border-amber-300 bg-amber-50 text-amber-800 rounded text-xs font-semibold hover:bg-amber-100';
+    function updateWaHeaderPill() {
+        // Header stays clean with a single Navigation button; WhatsApp link status renders inside the Dashboard Hub and Link WhatsApp workspace.
+    }
+
+    async function refreshFilteredAnalytics(container) {
+        try {
+            const params = new URLSearchParams();
+            if (adminState.analyticsCategory !== 'all') params.set('category', adminState.analyticsCategory);
+            if (adminState.analyticsStatus !== 'all') params.set('status', adminState.analyticsStatus);
+            const qs = params.toString();
+            const res = await adminRequest(`/api/admin/analytics${qs ? `?${qs}` : ''}`);
+            adminState.filteredAnalytics = res.analytics;
+        } catch (err) {
+            toast(err.message, true);
         }
+        renderAnalyticsTab(container);
+    }
+
+    function renderAnalyticsTab(container) {
+        const baseAnalytics = adminState.overview?.analytics;
+        const activeFilterActive = adminState.analyticsCategory !== 'all' || adminState.analyticsStatus !== 'all';
+        const analytics = (activeFilterActive && adminState.filteredAnalytics) ? adminState.filteredAnalytics : baseAnalytics;
+        const categories = adminState.overview?.categories || [];
+
+        if (!analytics) {
+            container.innerHTML = '<div class="bg-white border border-gray-200 rounded p-8 text-center text-sm text-gray-500">Analytics data unavailable. Click Refresh to load.</div>';
+            return;
+        }
+
+        const summary = analytics.summary || {};
+        const byStatus = analytics.byStatus || [];
+        const byCategories = analytics.byCategories || [];
+        const byCity = analytics.byCity || [];
+        const topProducts = analytics.topProducts || [];
+
+        const statusStyleMap = {
+            'Pending WhatsApp Confirmation': { border: 'border-amber-200', bg: 'bg-amber-50/70', bar: 'bg-amber-500', text: 'text-amber-900', pill: 'text-amber-700' },
+            Confirmed: { border: 'border-emerald-200', bg: 'bg-emerald-50/70', bar: 'bg-emerald-600', text: 'text-emerald-950', pill: 'text-emerald-700' },
+            Dispatched: { border: 'border-sky-200', bg: 'bg-sky-50/70', bar: 'bg-sky-600', text: 'text-sky-950', pill: 'text-sky-700' },
+            Delivered: { border: 'border-teal-200', bg: 'bg-teal-50/70', bar: 'bg-teal-600', text: 'text-teal-950', pill: 'text-teal-700' },
+            Cancelled: { border: 'border-red-200', bg: 'bg-red-50/70', bar: 'bg-red-600', text: 'text-red-950', pill: 'text-red-700' }
+        };
+
+        const modeBtnClass = (mode) =>
+            adminState.analyticsMode === mode
+                ? 'analytics-mode-btn h-9 px-4 rounded text-xs font-semibold bg-gray-900 text-white'
+                : 'analytics-mode-btn h-9 px-4 rounded text-xs font-semibold bg-white border border-gray-300 text-gray-800 hover:bg-gray-50';
+
+        const statusCardsHtml = `
+            <div class="bg-white border border-gray-200 rounded p-5 space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <h3 class="font-display font-bold text-base text-gray-950">Order Lifecycle Breakdown</h3>
+                        <p class="text-xs text-gray-500">Click any status button (Confirmed Orders, Dispatched, Delivered, Pending, Cancelled) to filter analytics.</p>
+                    </div>
+                    ${adminState.analyticsStatus !== 'all' ? `
+                        <button type="button" id="analytics-jump-status-orders" class="h-8 px-3 bg-gray-900 text-white rounded text-xs font-semibold hover:bg-gray-800">
+                            Open "${escapeHtml(adminState.analyticsStatus)}" in Live Orders →
+                        </button>
+                    ` : ''}
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    ${byStatus.map((st) => {
+                        const style = statusStyleMap[st.key] || statusStyleMap.Confirmed;
+                        const selected = adminState.analyticsStatus === st.key;
+                        return `
+                            <button
+                                type="button"
+                                data-analytics-status="${escapeHtml(st.key)}"
+                                class="analytics-status-btn text-left p-4 rounded border transition-colors ${selected ? 'ring-2 ring-brand-500 border-brand-500 bg-brand-50/40' : `${style.border} ${style.bg} hover:border-gray-400`}"
+                            >
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[11px] font-bold uppercase tracking-wider ${style.pill}">${escapeHtml(st.label)}</span>
+                                    <span class="text-[11px] font-mono font-semibold text-gray-600 tabular-nums">${st.sharePct}%</span>
+                                </div>
+                                <p class="font-display text-2xl font-extrabold text-gray-950 tabular-nums mt-1.5">${st.count}</p>
+                                <p class="text-xs font-semibold text-gray-700 tabular-nums mt-0.5">${formatPkr(st.revenue)}</p>
+                                <div class="w-full h-1.5 bg-white/90 rounded overflow-hidden mt-2.5 border border-black/5">
+                                    <div class="h-full ${style.bar}" style="width: ${Math.max(st.count > 0 ? 6 : 0, st.sharePct)}%"></div>
+                                </div>
+                            </button>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+
+        const byCategoriesHtml = `
+            <div class="bg-white border border-gray-200 rounded overflow-hidden">
+                <div class="px-5 py-4 border-b border-gray-200 space-y-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <h3 class="font-display font-bold text-base text-gray-950">Analytics By Categories</h3>
+                            <p class="text-xs text-gray-500">Compare order statuses, units sold, catalog stock, and PKR revenue across each electronics category.</p>
+                        </div>
+                        ${adminState.analyticsCategory !== 'all' ? `
+                            <button type="button" id="analytics-jump-cat-orders" class="h-8 px-3 bg-brand-500 hover:bg-brand-600 text-white rounded text-xs font-semibold">
+                                View Category Orders →
+                            </button>
+                        ` : ''}
+                    </div>
+                    ${(() => {
+                        const filterCats = (baseAnalytics?.byCategories && baseAnalytics.byCategories.length)
+                            ? baseAnalytics.byCategories
+                            : categories;
+                        return `
+                    <div class="flex flex-wrap gap-1.5">
+                        <button
+                            type="button"
+                            data-analytics-cat="all"
+                            class="analytics-cat-btn h-8 px-3 rounded text-xs font-semibold ${adminState.analyticsCategory === 'all' ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}"
+                        >
+                            All Categories (${filterCats.length})
+                        </button>
+                        ${filterCats.map((cat) => `
+                            <button
+                                type="button"
+                                data-analytics-cat="${escapeHtml(cat.slug)}"
+                                class="analytics-cat-btn h-8 px-3 rounded text-xs font-semibold ${adminState.analyticsCategory === cat.slug ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}"
+                            >
+                                ${escapeHtml(cat.name)}
+                            </button>
+                        `).join('')}
+                    </div>`;
+                    })()}
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-gray-50 border-b border-gray-200 text-gray-600 uppercase">
+                            <tr>
+                                <th class="px-4 py-3 font-semibold">Category</th>
+                                <th class="px-4 py-3 font-semibold">Items / Stock</th>
+                                <th class="px-4 py-3 font-semibold">Units Sold</th>
+                                <th class="px-4 py-3 font-semibold">Confirmed</th>
+                                <th class="px-4 py-3 font-semibold">Dispatched</th>
+                                <th class="px-4 py-3 font-semibold">Delivered</th>
+                                <th class="px-4 py-3 font-semibold">Pending / Canc</th>
+                                <th class="px-4 py-3 font-semibold">Revenue &amp; Share</th>
+                                <th class="px-4 py-3 font-semibold">Orders</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            ${byCategories.map((cat) => {
+                                const isSelected = adminState.analyticsCategory === cat.slug;
+                                return `
+                                    <tr class="${isSelected ? 'bg-brand-50/40' : 'hover:bg-gray-50/70'}">
+                                        <td class="px-4 py-3">
+                                            <p class="font-bold text-gray-950">${escapeHtml(cat.name)}</p>
+                                            <p class="text-[11px] font-mono text-gray-400">${escapeHtml(cat.slug)}</p>
+                                        </td>
+                                        <td class="px-4 py-3 tabular-nums text-gray-700">${cat.productCount} SKUs · ${cat.totalStock} stock</td>
+                                        <td class="px-4 py-3 tabular-nums font-bold text-gray-900">${cat.unitsSold}</td>
+                                        <td class="px-4 py-3 tabular-nums font-semibold text-emerald-700">${cat.confirmedOrders}</td>
+                                        <td class="px-4 py-3 tabular-nums font-semibold text-sky-700">${cat.dispatchedOrders}</td>
+                                        <td class="px-4 py-3 tabular-nums font-semibold text-teal-700">${cat.deliveredOrders}</td>
+                                        <td class="px-4 py-3 tabular-nums text-gray-600">${cat.pendingOrders} / <span class="text-red-600">${cat.cancelledOrders}</span></td>
+                                        <td class="px-4 py-3 min-w-[160px]">
+                                            <div class="flex items-center justify-between gap-2 tabular-nums">
+                                                <span class="font-bold text-gray-950">${formatPkr(cat.revenue)}</span>
+                                                <span class="text-[11px] text-gray-500">${cat.revenueSharePct}%</span>
+                                            </div>
+                                            <div class="w-full h-1.5 bg-gray-100 rounded overflow-hidden mt-1">
+                                                <div class="h-full bg-brand-500" style="width: ${Math.max(cat.revenue > 0 ? 5 : 0, cat.revenueSharePct)}%"></div>
+                                            </div>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <button type="button" data-drill-cat="${escapeHtml(cat.slug)}" class="drill-cat-orders-btn px-2.5 py-1 border border-gray-300 bg-white hover:bg-gray-100 rounded text-[11px] font-semibold text-gray-800">
+                                                View (${cat.totalOrders})
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="9" class="p-6 text-center text-gray-500">No category metrics available.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        const secondaryInsightsHtml = `
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white border border-gray-200 rounded overflow-hidden">
+                    <div class="px-5 py-3.5 border-b border-gray-200">
+                        <h3 class="font-display font-bold text-base text-gray-950">Top Electronics by Revenue</h3>
+                    </div>
+                    <div class="divide-y divide-gray-100">
+                        ${topProducts.map((p, idx) => `
+                            <div class="px-5 py-3 flex items-center justify-between gap-3 text-xs">
+                                <div class="min-w-0">
+                                    <p class="font-bold text-gray-900 truncate">${idx + 1}. ${escapeHtml(p.title)}</p>
+                                    <p class="text-[11px] text-gray-500">${escapeHtml(p.categoryName)} · ${p.unitsSold} unit(s) sold</p>
+                                </div>
+                                <span class="font-bold text-brand-600 tabular-nums shrink-0">${formatPkr(p.revenue)}</span>
+                            </div>
+                        `).join('') || '<p class="p-5 text-xs text-gray-500">No active order item sales recorded for this filter yet.</p>'}
+                    </div>
+                </div>
+
+                <div class="bg-white border border-gray-200 rounded overflow-hidden">
+                    <div class="px-5 py-3.5 border-b border-gray-200">
+                        <h3 class="font-display font-bold text-base text-gray-950">Delivery Cities Performance</h3>
+                    </div>
+                    <div class="divide-y divide-gray-100">
+                        ${byCity.map((c) => `
+                            <div class="px-5 py-3 flex items-center justify-between gap-3 text-xs">
+                                <div>
+                                    <p class="font-bold text-gray-900">${escapeHtml(c.city)}</p>
+                                    <p class="text-[11px] text-gray-500">${c.orderCount} order(s) · ${c.deliveredCount} delivered</p>
+                                </div>
+                                <span class="font-bold text-gray-950 tabular-nums">${formatPkr(c.revenue)}</span>
+                            </div>
+                        `).join('') || '<p class="p-5 text-xs text-gray-500">No city order metrics for this filter yet.</p>'}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.innerHTML = `
+            <div class="space-y-6">
+                <!-- Analytics Header & Mode Controls -->
+                <div class="bg-white border border-gray-200 rounded p-5 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <h2 class="font-display font-bold text-lg text-gray-950">Store Analytics &amp; Fulfillment Pipeline</h2>
+                        <p class="text-xs text-gray-500 mt-0.5">
+                            Live breakdown across Confirmed Orders, Dispatched, Delivered, Pending WhatsApp, Cancelled, and Product Categories.
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" id="analytics-mode-categories" data-analytics-mode="categories" class="${modeBtnClass('categories')}">
+                            By Categories
+                        </button>
+                        <button type="button" id="analytics-mode-status" data-analytics-mode="status" class="${modeBtnClass('status')}">
+                            By Order Status
+                        </button>
+                        <button type="button" id="analytics-mode-all" data-analytics-mode="all" class="${modeBtnClass('all')}">
+                            All Analytics
+                        </button>
+                        ${activeFilterActive ? `
+                            <button type="button" id="analytics-reset-filters" class="h-9 px-3 rounded text-xs font-semibold border border-red-300 text-red-700 hover:bg-red-50">
+                                Reset Filters
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Summary Metric Cards -->
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                    <div class="bg-white border border-gray-200 rounded p-4">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Active Gross Revenue</p>
+                        <p class="font-display text-xl font-extrabold text-gray-950 tabular-nums mt-1">${formatPkr(summary.grossRevenue || 0)}</p>
+                        <p class="text-[11px] text-gray-500 mt-0.5 tabular-nums">${summary.totalOrders || 0} total orders · ${summary.totalUnitsSold || 0} units</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded p-4">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Confirmed + Dispatched + Delivered</p>
+                        <p class="font-display text-xl font-extrabold text-emerald-700 tabular-nums mt-1">${summary.confirmedPipelineOrders || 0} Orders</p>
+                        <p class="text-[11px] text-gray-500 mt-0.5 tabular-nums">${formatPkr(summary.confirmedPipelineRevenue || 0)} pipeline value</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded p-4">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Delivered Revenue</p>
+                        <p class="font-display text-xl font-extrabold text-teal-700 tabular-nums mt-1">${formatPkr(summary.deliveredRevenue || 0)}</p>
+                        <p class="text-[11px] text-gray-500 mt-0.5 tabular-nums">${summary.deliveredOrders || 0} delivered · ${summary.dispatchedOrders || 0} dispatched</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded p-4">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Avg Order Value &amp; Confirmation</p>
+                        <p class="font-display text-xl font-extrabold text-brand-600 tabular-nums mt-1">${formatPkr(summary.averageOrderValue || 0)}</p>
+                        <p class="text-[11px] text-gray-500 mt-0.5 tabular-nums">${summary.confirmationRate || 0}% confirmation rate</p>
+                    </div>
+                </div>
+
+                ${adminState.analyticsMode === 'categories' ? byCategoriesHtml + statusCardsHtml : ''}
+                ${adminState.analyticsMode === 'status' ? statusCardsHtml + secondaryInsightsHtml : ''}
+                ${adminState.analyticsMode === 'all' ? statusCardsHtml + byCategoriesHtml + secondaryInsightsHtml : ''}
+            </div>
+        `;
+
+        container.querySelectorAll('.analytics-mode-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                adminState.analyticsMode = btn.dataset.analyticsMode || 'all';
+                renderAnalyticsTab(container);
+            });
+        });
+
+        document.getElementById('analytics-reset-filters')?.addEventListener('click', () => {
+            adminState.analyticsCategory = 'all';
+            adminState.analyticsStatus = 'all';
+            adminState.filteredAnalytics = null;
+            renderAnalyticsTab(container);
+        });
+
+        container.querySelectorAll('.analytics-status-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const st = btn.dataset.analyticsStatus;
+                adminState.analyticsStatus = adminState.analyticsStatus === st ? 'all' : st;
+                refreshFilteredAnalytics(container);
+            });
+        });
+
+        container.querySelectorAll('.analytics-cat-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                adminState.analyticsCategory = btn.dataset.analyticsCat || 'all';
+                refreshFilteredAnalytics(container);
+            });
+        });
+
+        container.querySelectorAll('.drill-cat-orders-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                adminState.orderCategoryFilter = btn.dataset.drillCat || 'all';
+                adminState.orderStatusFilter = adminState.analyticsStatus || 'all';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+            });
+        });
+
+        document.getElementById('analytics-jump-status-orders')?.addEventListener('click', () => {
+            adminState.orderStatusFilter = adminState.analyticsStatus || 'all';
+            adminState.orderCategoryFilter = adminState.analyticsCategory || 'all';
+            adminState.activeTab = 'orders';
+            renderActiveAdminTab();
+        });
+
+        document.getElementById('analytics-jump-cat-orders')?.addEventListener('click', () => {
+            adminState.orderCategoryFilter = adminState.analyticsCategory || 'all';
+            adminState.orderStatusFilter = adminState.analyticsStatus || 'all';
+            adminState.activeTab = 'orders';
+            renderActiveAdminTab();
+        });
+    }
+
+    function exportOrdersCsv() {
+        const orders = adminState.overview?.orders || [];
+        if (orders.length === 0) {
+            toast('No orders available to export.', true);
+            return;
+        }
+        const csvEscape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const header = ['Order ID', 'Customer Name', 'WhatsApp', 'City', 'Shipping Address', 'Items & Variants', 'Subtotal', 'Discount', 'COD Fee', 'Grand Total', 'Status', 'Order Date'];
+        const lines = [header.map(csvEscape).join(',')];
+        for (const o of orders) {
+            const itemSummary = (o.items || []).map((i) => `${i.title}${i.variant ? ` (${i.variant})` : ''} x${i.quantity}`).join(' | ');
+            lines.push([
+                o.orderId,
+                o.customerName,
+                o.whatsappNumber,
+                o.city,
+                o.shippingAddress,
+                itemSummary,
+                o.subtotal,
+                o.discountTotal || 0,
+                o.codDeliveryCharges || 0,
+                o.grandTotal,
+                o.orderStatus,
+                o.orderDate
+            ].map(csvEscape).join(','));
+        }
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `almumtaz-cod-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast(`Exported ${orders.length} order(s) to CSV`);
+    }
+
+    function renderDashboardTab(container) {
+        const overview = adminState.overview || {};
+        const orders = overview.orders || [];
+        const ws = overview.whatsappStatus || {};
+        const mediaDiag = overview.mediaDiagnostics || {};
+        const cfg = overview.config || {};
+        const connected = ws.connectedSessions || [];
+        const railwayUrl = ws.railwayUrl || cfg.railwayUrl || '';
+        const groups = getAdminNavigationGroups();
+        const totalFeatures = groups.reduce((acc, g) => acc + g.items.length, 0);
+
+        const groupIcons = {
+            'Orders & Fulfillment': '<svg class="w-4 h-4 text-brand-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>',
+            'Analytics & Reports': '<svg class="w-4 h-4 text-sky-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13h4v8H3v-8zm7-6h4v14h-4V7zm7-4h4v18h-4V3z"/></svg>',
+            'Catalog, Variants & Media': '<svg class="w-4 h-4 text-indigo-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/></svg>',
+            'WhatsApp Bot & Railway 24/7': '<svg class="w-4 h-4 text-wa-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>',
+            'Store Settings & System': '<svg class="w-4 h-4 text-slate-700 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>'
+        };
+
+        const latestOrders = orders.slice(0, 5);
+
+        container.innerHTML = `
+            <div class="space-y-6">
+                <!-- Feature Hub Utility Bar -->
+                <div class="bg-white border border-slate-200 rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+                        <h2 class="font-display font-bold text-base text-slate-950">Feature Hub (${totalFeatures} Modules)</h2>
+                        <span class="text-xs font-medium text-slate-500">
+                            WhatsApp: <strong class="${connected.length ? 'text-emerald-700' : 'text-amber-700'}">${connected.length ? `+${escapeHtml(connected[0])}` : 'Not Linked'}</strong>
+                            · Media: <strong class="text-slate-800">${mediaDiag.activeBackend === 'cloudinary' ? 'Cloudinary' : 'SQLite'}</strong>
+                            · Host: <strong class="text-slate-800">${railwayUrl ? (ws.railwayReachable ? 'Railway Online' : 'Railway Offline') : 'Local Server'}</strong>
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button type="button" id="dash-export-csv-btn" class="h-8 px-3 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-800 whitespace-nowrap transition-colors">
+                            Export Orders CSV
+                        </button>
+                        <button type="button" id="dash-refresh-btn" class="h-8 px-3 bg-slate-950 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold whitespace-nowrap transition-colors">
+                            Refresh Data
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Categorized Feature Access Buttons -->
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    ${groups.map((g) => `
+                        <section class="bg-white border border-slate-200 rounded-xl p-4 space-y-3 flex flex-col">
+                            <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    ${groupIcons[g.group] || ''}
+                                    <h3 class="font-display font-bold text-sm text-slate-950 truncate">${escapeHtml(g.group)}</h3>
+                                </div>
+                                <span class="text-[11px] font-mono font-semibold text-slate-400 tabular-nums shrink-0">${g.items.length}</span>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1 content-start">
+                                ${g.items.map((item) => `
+                                    <button
+                                        type="button"
+                                        data-dash-action="${escapeHtml(item.id)}"
+                                        class="dash-feature-btn text-left p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-white hover:border-brand-500 transition-colors group"
+                                    >
+                                        <span class="block text-xs font-bold text-slate-900 group-hover:text-brand-600 leading-snug">${escapeHtml(item.label)}</span>
+                                        <span class="block text-[11px] text-slate-500 leading-tight mt-0.5 line-clamp-1">${escapeHtml(item.desc)}</span>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </section>
+                    `).join('')}
+                </div>
+
+                <!-- Live Operational Glance: Recent COD Orders + Store Readiness -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                    <div class="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                        <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between gap-2">
+                            <h3 class="font-display font-bold text-sm text-slate-950">Latest Cash on Delivery Orders</h3>
+                            <button type="button" data-dash-action="orders-all" class="dash-feature-btn text-xs font-semibold text-brand-600 hover:underline whitespace-nowrap">
+                                Open Full Queue →
+                            </button>
+                        </div>
+                        ${latestOrders.length === 0 ? `
+                            <p class="p-6 text-xs text-slate-500 text-center">No COD orders recorded yet.</p>
+                        ` : `
+                            <div class="divide-y divide-slate-100">
+                                ${latestOrders.map((o) => {
+                                    const badgeClass =
+                                        o.orderStatus === 'Confirmed' || o.orderStatus === 'Delivered'
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                            : o.orderStatus === 'Dispatched' || o.orderStatus === 'Shipped'
+                                            ? 'bg-sky-50 text-sky-800 border-sky-200'
+                                            : o.orderStatus === 'Cancelled'
+                                            ? 'bg-red-50 text-red-700 border-red-200'
+                                            : 'bg-amber-50 text-amber-800 border-amber-200';
+                                    return `
+                                        <div class="px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-xs hover:bg-slate-50/70">
+                                            <div class="min-w-0">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-mono font-bold text-slate-950">#${escapeHtml(o.orderId)}</span>
+                                                    <span class="px-2 py-0.5 text-[10px] font-semibold border rounded ${badgeClass}">${escapeHtml(o.orderStatus)}</span>
+                                                </div>
+                                                <p class="text-slate-600 truncate mt-0.5">${escapeHtml(o.customerName)} · ${escapeHtml(o.city)} · <span class="font-mono">${escapeHtml(o.whatsappNumber)}</span></p>
+                                            </div>
+                                            <div class="flex items-center gap-2 shrink-0">
+                                                <span class="font-bold tabular-nums text-slate-950">${formatPkr(o.grandTotal)}</span>
+                                                <button type="button" data-dash-order-view="${escapeHtml(o.orderId)}" class="dash-view-order-btn h-7 px-2.5 border border-slate-300 bg-white hover:bg-slate-100 rounded text-[11px] font-semibold text-slate-800">Details</button>
+                                                ${o.orderStatus === 'Pending WhatsApp Confirmation' ? `
+                                                    <button type="button" data-dash-confirm="${escapeHtml(o.orderId)}" data-dash-from="${escapeHtml(o.whatsappDigits)}" class="dash-confirm-order-btn h-7 px-2.5 bg-wa-600 hover:bg-wa-700 text-white rounded text-[11px] font-semibold">Confirm</button>
+                                                ` : ''}
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        `}
+                    </div>
+
+                    <div class="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 h-fit">
+                        <h3 class="font-display font-bold text-sm text-slate-950 border-b border-slate-100 pb-2.5">Store System Readiness</h3>
+                        <div class="space-y-2.5 text-xs">
+                            <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                                <div class="min-w-0">
+                                    <p class="font-bold text-slate-900">WhatsApp Link &amp; 24/7 Bot</p>
+                                    <p class="text-slate-500 truncate">${connected.length ? `Connected: +${escapeHtml(connected[0])}` : 'Pair store phone via 8-digit code'}</p>
+                                </div>
+                                <button type="button" data-dash-action="wa-link" class="dash-feature-btn h-8 px-3 bg-wa-600 hover:bg-wa-700 text-white rounded-lg text-[11px] font-semibold whitespace-nowrap shrink-0">
+                                    ${connected.length ? 'Manage' : 'Link Phone'}
+                                </button>
+                            </div>
+
+                            <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                                <div class="min-w-0">
+                                    <p class="font-bold text-slate-900">Product Multi-Image Storage</p>
+                                    <p class="text-slate-500 truncate">${mediaDiag.activeBackend === 'cloudinary' ? `Cloudinary CDN (${escapeHtml(mediaDiag.cloudinaryCloudName || 'Active')})` : 'SQLite Media Fallback'}</p>
+                                </div>
+                                <button type="button" data-dash-action="products-add" class="dash-feature-btn h-8 px-3 bg-slate-950 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold whitespace-nowrap shrink-0">
+                                    + Add Item
+                                </button>
+                            </div>
+
+                            <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                                <div class="min-w-0">
+                                    <p class="font-bold text-slate-900">Railway Bridge &amp; Variables</p>
+                                    <p class="text-slate-500 truncate">${railwayUrl ? escapeHtml(railwayUrl) : 'Built-in server mode active'}</p>
+                                </div>
+                                <button type="button" data-dash-action="vars-security" class="dash-feature-btn h-8 px-3 border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 rounded-lg text-[11px] font-semibold whitespace-nowrap shrink-0">
+                                    Configure
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.querySelectorAll('.dash-feature-btn').forEach((btn) => {
+            btn.addEventListener('click', () => executeAdminNavAction(btn.dataset.dashAction));
+        });
+
+        document.getElementById('dash-export-csv-btn')?.addEventListener('click', () => exportOrdersCsv());
+        document.getElementById('dash-refresh-btn')?.addEventListener('click', () => loadAdminOverview());
+
+        container.querySelectorAll('.dash-view-order-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const ord = orders.find((o) => o.orderId === btn.dataset.dashOrderView);
+                if (ord) openOrderDetailModal(ord);
+            });
+        });
+
+        container.querySelectorAll('.dash-confirm-order-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await adminRequest('/api/whatsapp/webhook', {
+                        method: 'POST',
+                        body: JSON.stringify({ buttonId: `confirm_order_${btn.dataset.dashConfirm}`, from: btn.dataset.dashFrom })
+                    });
+                    toast(`Confirmed #${btn.dataset.dashConfirm}`);
+                    await loadAdminOverview();
+                } catch (err) {
+                    toast(err.message, true);
+                }
+            });
+        });
+    }
+
+    function getAdminNavigationGroups() {
+        const orders = adminState.overview?.orders || [];
+        const products = adminState.overview?.products || [];
+        const inquiries = adminState.overview?.inquiries || [];
+        const pendingCount = orders.filter((o) => o.orderStatus === 'Pending WhatsApp Confirmation').length;
+        const confirmedCount = orders.filter((o) => o.orderStatus === 'Confirmed').length;
+        const dispatchedCount = orders.filter((o) => o.orderStatus === 'Dispatched' || o.orderStatus === 'Shipped').length;
+        const deliveredCount = orders.filter((o) => o.orderStatus === 'Delivered').length;
+        const cancelledCount = orders.filter((o) => o.orderStatus === 'Cancelled').length;
+        const lowStockCount = products.filter((p) => Number(p.stock) <= 12).length;
+
+        return [
+            {
+                group: 'Orders & Fulfillment',
+                items: [
+                    { id: 'orders-all', label: `All Live Orders (${orders.length})`, desc: 'Full COD order queue & search' },
+                    { id: 'orders-pending', label: `Pending WhatsApp (${pendingCount})`, desc: 'Awaiting buyer WhatsApp confirm' },
+                    { id: 'orders-confirmed', label: `Confirmed Orders (${confirmedCount})`, desc: 'Verified COD orders ready to pack' },
+                    { id: 'orders-dispatched', label: `Dispatched Orders (${dispatchedCount})`, desc: 'Shipped & in-transit parcels' },
+                    { id: 'orders-delivered', label: `Delivered Orders (${deliveredCount})`, desc: 'Completed COD deliveries' },
+                    { id: 'orders-cancelled', label: `Cancelled Orders (${cancelledCount})`, desc: 'Rejected or cancelled orders' }
+                ]
+            },
+            {
+                group: 'Analytics & Reports',
+                items: [
+                    { id: 'analytics-all', label: 'Full Store Analytics', desc: 'Complete revenue & pipeline overview' },
+                    { id: 'analytics-categories', label: 'Analytics By Categories', desc: 'Department sales, stock & share' },
+                    { id: 'analytics-status', label: 'Analytics By Order Status', desc: 'Confirmed, Dispatched & Delivered' },
+                    { id: 'orders-export-csv', label: 'Export Orders CSV', desc: 'Download COD orders spreadsheet' }
+                ]
+            },
+            {
+                group: 'Catalog, Variants & Media',
+                items: [
+                    { id: 'products-add', label: 'Add Product & Variant Prices', desc: 'Create item with per-variant PKR prices' },
+                    { id: 'products-inventory', label: `Catalog Inventory (${products.length})`, desc: 'Edit items, variants & prices' },
+                    { id: 'products-lowstock', label: `Low Stock Alerts (${lowStockCount})`, desc: 'Filter low inventory & +5 restock' },
+                    { id: 'products-categories', label: 'Categories Manager', desc: 'Add or remove store departments' },
+                    { id: 'products-media', label: 'Multi-Image Media Library', desc: 'Cloudinary & SQLite photo manager' }
+                ]
+            },
+            {
+                group: 'WhatsApp Bot & Railway 24/7',
+                items: [
+                    { id: 'wa-link', label: 'Link WhatsApp Number', desc: 'Pair phone via 8-digit code' },
+                    { id: 'wa-sessions', label: 'Active Linked Devices', desc: 'Check connected WhatsApp bots' },
+                    { id: 'wa-bot-tester', label: '5-Button Bot Simulator', desc: 'Test Categories, Offers & Inquiry' },
+                    { id: 'wa-inquiries', label: `Customer Inquiries (${inquiries.length})`, desc: 'View inquiries sent to Admin_Whatsapp' },
+                    { id: 'wa-logs', label: 'WhatsApp Automation Logs', desc: 'Audit live inbound/outbound bot logs' }
+                ]
+            },
+            {
+                group: 'Store Settings & System',
+                items: [
+                    { id: 'vars-security', label: 'Security & Env Variables', desc: 'Admin credentials, Cloudinary & keys' },
+                    { id: 'vars-cod-rates', label: 'City COD Delivery Rates', desc: 'Hasilpur & nationwide COD fees' },
+                    { id: 'vars-test-railway', label: 'Test Railway 24/7 Bridge', desc: 'Live ping to Railway_URL health' },
+                    { id: 'system-refresh', label: 'Refresh All Store Data', desc: 'Sync orders, inventory & bot status' }
+                ]
+            }
+        ];
+    }
+
+    function toggleAdminNavigation(forceState = null) {
+        adminState.navOpen = forceState !== null ? Boolean(forceState) : !adminState.navOpen;
+        const drawer = document.getElementById('admin-nav-drawer');
+        const toggleBtn = document.getElementById('admin-nav-toggle-btn');
+        if (drawer) drawer.classList.toggle('hidden', !adminState.navOpen);
+        if (toggleBtn) toggleBtn.setAttribute('aria-expanded', adminState.navOpen ? 'true' : 'false');
+        if (adminState.navOpen) renderAdminNavigation();
+    }
+
+    async function executeAdminNavAction(navId) {
+        adminState.activeNavId = navId;
+        switch (navId) {
+            case 'dashboard':
+                adminState.activeTab = 'dashboard';
+                renderActiveAdminTab();
+                break;
+            case 'orders-all':
+                adminState.orderStatusFilter = 'all';
+                adminState.orderCategoryFilter = 'all';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+                break;
+            case 'orders-pending':
+                adminState.orderStatusFilter = 'Pending WhatsApp Confirmation';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+                break;
+            case 'orders-confirmed':
+                adminState.orderStatusFilter = 'Confirmed';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+                break;
+            case 'orders-dispatched':
+                adminState.orderStatusFilter = 'Dispatched';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+                break;
+            case 'orders-delivered':
+                adminState.orderStatusFilter = 'Delivered';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+                break;
+            case 'orders-cancelled':
+                adminState.orderStatusFilter = 'Cancelled';
+                adminState.activeTab = 'orders';
+                renderActiveAdminTab();
+                break;
+            case 'analytics-all':
+                adminState.analyticsMode = 'all';
+                adminState.activeTab = 'analytics';
+                renderActiveAdminTab();
+                break;
+            case 'analytics-categories':
+                adminState.analyticsMode = 'categories';
+                adminState.activeTab = 'analytics';
+                renderActiveAdminTab();
+                break;
+            case 'analytics-status':
+                adminState.analyticsMode = 'status';
+                adminState.activeTab = 'analytics';
+                renderActiveAdminTab();
+                break;
+            case 'orders-export-csv':
+                exportOrdersCsv();
+                break;
+            case 'products-add':
+                adminState.editingProductId = null;
+                adminState.productImages = [];
+                adminState.productVariants = [{ name: 'Standard', originalPrice: '', discountPrice: '', stock: '' }];
+                adminState.productLowStockOnly = false;
+                adminState.activeTab = 'products';
+                renderActiveAdminTab();
+                document.getElementById('admin-product-form')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'products-inventory':
+                adminState.productLowStockOnly = false;
+                adminState.activeTab = 'products';
+                renderActiveAdminTab();
+                document.getElementById('admin-catalog-inventory-box')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'products-lowstock':
+                adminState.productLowStockOnly = true;
+                adminState.activeTab = 'products';
+                renderActiveAdminTab();
+                document.getElementById('admin-catalog-inventory-box')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'products-categories':
+                adminState.activeTab = 'products';
+                renderActiveAdminTab();
+                document.getElementById('admin-category-form')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'products-media':
+                adminState.activeTab = 'products';
+                renderActiveAdminTab();
+                document.getElementById('prod-image-dropzone')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'wa-link':
+                adminState.activeTab = 'link-whatsapp';
+                renderActiveAdminTab();
+                break;
+            case 'wa-sessions':
+                adminState.activeTab = 'link-whatsapp';
+                renderActiveAdminTab();
+                document.getElementById('linked-wa-sessions-list')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'wa-bot-tester':
+                adminState.activeTab = 'whatsapp';
+                renderActiveAdminTab();
+                break;
+            case 'wa-inquiries':
+                adminState.activeTab = 'whatsapp';
+                renderActiveAdminTab();
+                break;
+            case 'wa-logs':
+                adminState.activeTab = 'whatsapp';
+                renderActiveAdminTab();
+                break;
+            case 'vars-security':
+                adminState.activeTab = 'variables';
+                renderActiveAdminTab();
+                break;
+            case 'vars-cod-rates':
+                adminState.activeTab = 'variables';
+                renderActiveAdminTab();
+                document.querySelector('textarea[name="CITY_RATES_JSON"]')?.scrollIntoView({ behavior: 'smooth' });
+                break;
+            case 'vars-test-railway':
+                adminState.activeTab = 'variables';
+                renderActiveAdminTab();
+                document.getElementById('test-railway-btn')?.click();
+                break;
+            case 'system-refresh':
+                await loadAdminOverview();
+                toast('Store data & analytics refreshed');
+                break;
+            default:
+                break;
+        }
+        toggleAdminNavigation(false);
+    }
+
+    function renderAdminNavigation() {
+        const inner = document.getElementById('admin-nav-drawer-inner');
+        if (!inner) return;
+        const groups = getAdminNavigationGroups();
+        const q = adminState.navSearch.trim().toLowerCase();
+        const totalButtons = groups.reduce((acc, g) => acc + g.items.length, 0);
+
+        const filteredGroups = groups
+            .map((g) => ({
+                ...g,
+                items: q
+                    ? g.items.filter((it) => it.label.toLowerCase().includes(q) || it.desc.toLowerCase().includes(q) || g.group.toLowerCase().includes(q))
+                    : g.items
+            }))
+            .filter((g) => g.items.length > 0);
+
+        inner.innerHTML = `
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div>
+                    <h2 class="font-display font-bold text-base text-white">Admin Navigation Directory (${totalButtons} Features)</h2>
+                    <p class="text-xs text-slate-400">Jump directly to any order queue, category analytics view, variant price tool, WhatsApp bot utility, or cloud setting.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="admin-nav-dashboard-btn" type="button" class="h-8 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-semibold text-white whitespace-nowrap">
+                        Dashboard Hub
+                    </button>
+                    <input
+                        id="admin-nav-search"
+                        type="search"
+                        value="${escapeHtml(adminState.navSearch)}"
+                        placeholder="Search navigation features..."
+                        class="h-8 px-3 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-400 w-52 focus:border-brand-500 focus:outline-none"
+                    />
+                    <button id="admin-nav-close-btn" type="button" class="h-8 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-semibold text-slate-200 whitespace-nowrap">
+                        Close ✕
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                ${filteredGroups.map((g) => `
+                    <div class="space-y-2">
+                        <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-1">${escapeHtml(g.group)}</p>
+                        <div class="flex flex-col gap-1.5">
+                            ${g.items.map((item) => {
+                                const isActive = adminState.activeNavId === item.id;
+                                return `
+                                    <button
+                                        type="button"
+                                        data-nav-action="${escapeHtml(item.id)}"
+                                        class="admin-nav-feature-btn text-left px-3 py-2 rounded-lg border transition-colors ${
+                                            isActive
+                                                ? 'border-brand-500 bg-brand-500/20 text-white'
+                                                : 'border-slate-700 bg-slate-800/80 hover:bg-slate-800 hover:border-brand-500 text-white'
+                                        }"
+                                    >
+                                        <span class="block text-xs font-bold leading-snug">${escapeHtml(item.label)}</span>
+                                        <span class="block text-[10px] text-slate-400 leading-tight mt-0.5">${escapeHtml(item.desc)}</span>
+                                    </button>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `).join('') || '<p class="col-span-full text-xs text-slate-400 py-4 text-center">No navigation features match your search.</p>'}
+            </div>
+        `;
+
+        const searchEl = document.getElementById('admin-nav-search');
+        searchEl?.addEventListener('input', (e) => {
+            adminState.navSearch = e.target.value;
+            renderAdminNavigation();
+            const refreshed = document.getElementById('admin-nav-search');
+            if (refreshed) {
+                refreshed.focus();
+                refreshed.setSelectionRange(refreshed.value.length, refreshed.value.length);
+            }
+        });
+
+        document.getElementById('admin-nav-dashboard-btn')?.addEventListener('click', () => executeAdminNavAction('dashboard'));
+        document.getElementById('admin-nav-close-btn')?.addEventListener('click', () => toggleAdminNavigation(false));
+
+        inner.querySelectorAll('.admin-nav-feature-btn').forEach((btn) => {
+            btn.addEventListener('click', () => executeAdminNavAction(btn.dataset.navAction));
+        });
+    }
+
+    function getWorkspaceTitle() {
+        const map = {
+            orders: 'Dashboard / Live Cash on Delivery Orders',
+            analytics: 'Dashboard / Store Analytics & Fulfillment Pipeline',
+            products: 'Dashboard / Catalog, Per-Variant Pricing & Media',
+            'link-whatsapp': 'Dashboard / Link WhatsApp Number (24/7 Bot)',
+            variables: 'Dashboard / Variables, Cloudinary & Railway URL',
+            whatsapp: 'Dashboard / 5-Button Bot Simulator, Inquiries & Logs'
+        };
+        return map[adminState.activeTab] || 'Dashboard / Workspace';
     }
 
     function renderActiveAdminTab() {
         const container = document.getElementById('admin-tab-content');
         if (!container) return;
 
-        document.querySelectorAll('.admin-tab-btn').forEach((btn) => {
-            const active = btn.dataset.adminTab === adminState.activeTab;
-            btn.className = active
-                ? 'admin-tab-btn h-9 px-4 rounded text-sm font-semibold bg-gray-900 text-white'
-                : 'admin-tab-btn h-9 px-4 rounded text-sm font-semibold bg-white border border-gray-200 text-gray-700 hover:bg-gray-50';
-        });
+        const workspaceBar = document.getElementById('admin-workspace-bar');
+        const workspaceTitle = document.getElementById('admin-workspace-title');
+        const isDashboard = adminState.activeTab === 'dashboard';
+
+        if (workspaceBar) workspaceBar.classList.toggle('hidden', isDashboard);
+        if (workspaceTitle && !isDashboard) workspaceTitle.textContent = getWorkspaceTitle();
 
         switch (adminState.activeTab) {
+            case 'dashboard':
+                renderDashboardTab(container);
+                break;
+            case 'analytics':
+                renderAnalyticsTab(container);
+                break;
             case 'link-whatsapp':
                 renderLinkWhatsAppTab(container);
                 break;
@@ -1381,6 +2490,7 @@
             adminState.overview = data;
             renderKpis(data.stats);
             updateWaHeaderPill(data.whatsappStatus);
+            if (adminState.navOpen) renderAdminNavigation();
             renderActiveAdminTab();
 
             if (keepPreview && existingPreviewHtml && !existingPreviewHidden) {
@@ -1432,7 +2542,7 @@
                 });
                 setStoredToken(res.token);
                 showAuthView(true, res.username);
-                toast('Signed in to Admin Portal');
+                toast('Signed in to Admin Dashboard');
                 await loadAdminOverview();
             } catch (err) {
                 if (errEl) {
@@ -1442,7 +2552,7 @@
             } finally {
                 if (submitBtn) {
                     submitBtn.disabled = false;
-                    submitBtn.textContent = 'Sign In to Admin Portal';
+                    submitBtn.textContent = 'Sign In to Dashboard';
                 }
             }
         });
@@ -1457,16 +2567,22 @@
             toast('Signed out');
         });
 
-        document.getElementById('admin-wa-link-pill')?.addEventListener('click', () => {
-            adminState.activeTab = 'link-whatsapp';
+        document.getElementById('admin-home-btn')?.addEventListener('click', () => {
+            adminState.activeTab = 'dashboard';
+            adminState.activeNavId = 'dashboard';
+            toggleAdminNavigation(false);
             renderActiveAdminTab();
         });
 
-        document.querySelectorAll('.admin-tab-btn').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                adminState.activeTab = btn.dataset.adminTab;
-                renderActiveAdminTab();
-            });
+        document.getElementById('admin-back-dashboard-btn')?.addEventListener('click', () => {
+            adminState.activeTab = 'dashboard';
+            adminState.activeNavId = 'dashboard';
+            toggleAdminNavigation(false);
+            renderActiveAdminTab();
+        });
+
+        document.getElementById('admin-nav-toggle-btn')?.addEventListener('click', () => {
+            toggleAdminNavigation();
         });
 
         document.getElementById('admin-refresh-btn')?.addEventListener('click', () => loadAdminOverview());
@@ -1486,7 +2602,6 @@
                 adminRequest('/api/whatsapp/status').then((ws) => {
                     if (adminState.overview) {
                         adminState.overview.whatsappStatus = ws;
-                        updateWaHeaderPill(ws);
                     }
                 }).catch(() => {});
             }

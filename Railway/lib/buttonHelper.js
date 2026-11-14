@@ -11,7 +11,7 @@ async function sendButtonMessage(sock, jid, opts = {}, quoted = null) {
     } = opts;
 
     const cleanButtons = Array.isArray(buttons)
-        ? buttons.slice(0, 5).map((b, idx) => ({
+        ? buttons.slice(0, 6).map((b, idx) => ({
             id: String(b.id || `btn_${idx + 1}`),
             text: String(b.text || `Option ${idx + 1}`).slice(0, 24)
         }))

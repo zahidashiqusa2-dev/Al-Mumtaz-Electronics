@@ -5,13 +5,16 @@ const database = require('./database');
 const { sendButtonMessage } = require('./buttonHelper');
 const {
     normalizePakistanWhatsApp,
+    normalizeOrderLookupInput,
     formatPkr,
+    formatOrderTrackingMessage,
     buildMainBotButtons,
     parseIncomingBotAction,
     formatAdminInquiryForward
 } = require('./storeLogic');
 
 const inquirySessions = new Map();
+const trackSessions = new Map();
 let lastCatalogSyncAt = 0;
 
 function getSessionManager() {
@@ -61,6 +64,19 @@ function extractTextFromBaileysMessage(msg) {
         m.videoMessage?.caption ||
         ''
     ).trim();
+}
+
+function formatWhatsAppProductLines(products = []) {
+    return products.map((p, idx) => {
+        const discountStr = p.discountPercentage > 0
+            ? ` (Was ${formatPkr(p.originalPrice)} • *-${p.discountPercentage}% OFF*)`
+            : '';
+        const stockStr = p.stock > 0 ? `${p.stock} in stock` : 'Out of Stock';
+        const variantLine = Array.isArray(p.variantOptions) && p.variantOptions.length > 1
+            ? `\n   Variants: ${p.variantOptions.slice(0, 3).map((v) => `${v.name} (${formatPkr(v.discountPrice)})`).join(' | ')}`
+            : '';
+        return `${idx + 1}. *${p.title}* (${p.sku})\n   Price: *${formatPkr(p.discountPrice)}*${discountStr} · ${stockStr}${variantLine}`;
+    });
 }
 
 async function syncCatalogFromMainSite() {
@@ -126,10 +142,16 @@ async function dispatchMessage(recipient, { text, buttons = [], footer = '', mes
 
 async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null, quoted = null) {
     const { config } = database.getAllVariables();
-    const greeting = customerName ? `Assalam-o-Alaikum *${customerName}*!` : 'Assalam-o-Alaikum!';
+    const greeting = customerName && customerName !== 'Customer'
+        ? `Assalam-o-Alaikum *${customerName}*!`
+        : 'Assalam-o-Alaikum!';
     const text = [
         `${greeting} Welcome to *${config.storeName}* (${config.storeCity}).`,
-        'Choose an option below to explore categories, flash offers, featured electronics, or submit an inquiry:'
+        '',
+        'Start shopping or track your order right here on WhatsApp:',
+        '• Browse *Items Categories*, *Offered Items*, or *Featured Items*',
+        '• Track any COD order by sending *ORD-2026-9336* or *9336*',
+        '• Tap *Contact For Inquiry* to message our support desk'
     ].join('\n');
 
     return await dispatchMessage(recipient, {
@@ -144,6 +166,8 @@ async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null
 
 async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawText, orderId, decision, sock, quoted }) {
     const { config } = database.getAllVariables();
+    const followUpButtons = buildMainBotButtons();
+
     if (config.mainSiteUrl) {
         try {
             const res = await axios.post(
@@ -160,6 +184,8 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
             if (outcome?.replyText) {
                 await dispatchMessage(senderDigits, {
                     text: outcome.replyText,
+                    footer: `${config.storeName} • ${config.storeCity}`,
+                    buttons: outcome.followUpButtons || followUpButtons,
                     messageType: decision === 'Confirmed' ? 'order_confirmed_reply' : 'order_cancelled_reply',
                     quoted,
                     socketOverride: sock
@@ -178,22 +204,71 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
                         socketOverride: sock
                     }).catch(() => {});
                 }
-                return { found: outcome.found, order: outcome.order, replyText: outcome.replyText };
+                return { found: outcome.found, order: outcome.order, replyText: outcome.replyText, followUpButtons };
             }
         } catch (_) {}
     }
 
-    const fallbackMsg = orderId
-        ? `Your decision (*${decision}*) for Order *#${orderId}* has been received by ${config.storeName}.`
-        : `Your *${decision}* request has been received by ${config.storeName}.`;
+    const fallbackMsg = decision === 'Confirmed'
+        ? [
+            `✅ *Thank You!* Your order${orderId ? ` *#${orderId}*` : ''} is *CONFIRMED* at *${config.storeName}*.`,
+            '',
+            '🛍️ *Would you like to start shopping on WhatsApp?*',
+            'Tap any button below to browse items, offers, or track your order:'
+        ].join('\n')
+        : `Your *${decision}* request${orderId ? ` for Order *#${orderId}*` : ''} has been received by ${config.storeName}.`;
 
     await dispatchMessage(senderDigits, {
         text: fallbackMsg,
+        footer: `${config.storeName} • ${config.storeCity}`,
+        buttons: followUpButtons,
         messageType: 'order_decision_ack',
         quoted,
         socketOverride: sock
     });
-    return { found: false, replyText: fallbackMsg };
+    return { found: false, replyText: fallbackMsg, followUpButtons };
+}
+
+async function handleRailwayOrderTracking(cleanDigits, query, config, sock = null, quoted = null) {
+    trackSessions.delete(cleanDigits);
+    if (!config.mainSiteUrl) {
+        return await dispatchMessage(cleanDigits, {
+            text: `Order tracking is currently unavailable (MAIN_SITE_URL not linked). Tap *Contact For Inquiry* to check order *${query}*.`,
+            buttons: buildMainBotButtons(),
+            messageType: 'bot_track_unavailable',
+            quoted,
+            socketOverride: sock
+        });
+    }
+
+    try {
+        const res = await axios.get(
+            `${config.mainSiteUrl}/api/orders/track/${encodeURIComponent(query)}`,
+            { timeout: 8000 }
+        );
+        const order = res.data?.order;
+        if (order) {
+            return await dispatchMessage(cleanDigits, {
+                text: formatOrderTrackingMessage(order, config),
+                footer: `${config.storeName} • Order Tracking`,
+                buttons: buildMainBotButtons(),
+                messageType: 'bot_track_result',
+                quoted,
+                socketOverride: sock
+            });
+        }
+    } catch (_) {}
+
+    return await dispatchMessage(cleanDigits, {
+        text: [
+            `🔍 We could not find an order matching *${query}*.`,
+            'Please check your Order ID (for example *ORD-2026-9336* or the 4-digit code *9336*) and try again:'
+        ].join('\n'),
+        buttons: buildMainBotButtons(),
+        messageType: 'bot_track_not_found',
+        quoted,
+        socketOverride: sock
+    });
 }
 
 async function processIncomingMessage({ senderJid, senderName = 'Customer', rawText = '', sock = null, quoted = null }) {
@@ -215,6 +290,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
     const parsedAction = parseIncomingBotAction(rawText);
     if (parsedAction.type === 'order_decision' || parsedAction.type === 'order_decision_latest') {
         inquirySessions.delete(stateKey);
+        trackSessions.delete(stateKey);
         return await forwardOrderDecisionToMainSite({
             senderDigits: cleanDigits,
             senderName,
@@ -224,6 +300,31 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             sock,
             quoted
         });
+    }
+
+    const pendingTrack = trackSessions.get(stateKey);
+    const isExplicitMenuOrAction = [
+        'menu_categories', 'category_detail', 'menu_offers', 'menu_featured',
+        'menu_store', 'menu_track', 'menu_inquiry', 'greeting_menu', 'track_order_lookup'
+    ].includes(parsedAction.type);
+
+    if (pendingTrack && pendingTrack.step === 'awaiting_order_id' && !isExplicitMenuOrAction) {
+        const lookup = normalizeOrderLookupInput(rawText);
+        if (lookup.isFullId || lookup.isShortDigits) {
+            return await handleRailwayOrderTracking(cleanDigits, lookup.clean, config, sock, quoted);
+        }
+        return await dispatchMessage(cleanDigits, {
+            text: 'Please send your valid Order ID (e.g. *ORD-2026-9336*) or the 4-digit code (e.g. *9336*), or tap *Contact For Inquiry* below.',
+            buttons: buildMainBotButtons(),
+            messageType: 'bot_track_retry',
+            quoted,
+            socketOverride: sock
+        });
+    }
+
+    if (parsedAction.type === 'track_order_lookup') {
+        inquirySessions.delete(stateKey);
+        return await handleRailwayOrderTracking(cleanDigits, parsedAction.query, config, sock, quoted);
     }
 
     const pendingInquiry = inquirySessions.get(stateKey);
@@ -293,8 +394,9 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 `Your inquiry details have been forwarded to our *${config.storeName}* support desk.`,
                 'Our representative will contact you on this WhatsApp number shortly.',
                 '',
-                'Reply with any message anytime to reopen the store menu.'
+                'Explore more below or reply anytime to reopen the store menu:'
             ].join('\n'),
+            buttons: buildMainBotButtons(),
             messageType: 'inquiry_submitted_ack',
             quoted,
             socketOverride: sock
@@ -306,16 +408,18 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
     switch (parsedAction.type) {
         case 'menu_categories': {
             inquirySessions.delete(stateKey);
+            trackSessions.delete(stateKey);
             const categories = database.getCategories();
             const catLines = categories.map((c, idx) => `${idx + 1}. *${c.name}* (${c.productCount || 0} items) — reply \`cat_${c.slug}\``);
             const catButtons = categories.slice(0, 4).map((c) => ({
                 id: `cat_${c.slug}`,
                 text: c.name.slice(0, 22)
             }));
+            catButtons.push({ id: 'almumtaz_track', text: 'Track Order' });
             catButtons.push({ id: 'almumtaz_inquiry', text: 'Contact For Inquiry' });
 
             return await dispatchMessage(cleanDigits, {
-                text: `📂 *${config.storeName} — Product Categories*\n\n${catLines.join('\n')}\n\nTap a category below or reply with its code:`,
+                text: `📂 *${config.storeName} — Product Categories*\n\n${catLines.join('\n')}\n\nTap a category below or reply with its code to view products & prices:`,
                 buttons: catButtons,
                 messageType: 'bot_categories',
                 quoted,
@@ -325,16 +429,17 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
         case 'category_detail': {
             inquirySessions.delete(stateKey);
+            trackSessions.delete(stateKey);
             const items = database.getProducts({ category: parsedAction.slug }).slice(0, 6);
             if (items.length === 0) {
                 return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
             }
-            const lines = items.map((p, idx) =>
-                `${idx + 1}. *${p.title}*\n   Price: *${formatPkr(p.discountPrice)}*` +
-                (p.discountPercentage > 0 ? ` ~( ${formatPkr(p.originalPrice)} )~ (-${p.discountPercentage}%)` : '')
-            );
+            const lines = formatWhatsAppProductLines(items);
+            const orderHint = config.storePublicUrl
+                ? `\n\nOrder online with COD: ${config.storePublicUrl}`
+                : '\n\nTap *Contact For Inquiry* below to reserve any item on WhatsApp!';
             return await dispatchMessage(cleanDigits, {
-                text: `📦 *Category Selection*\n\n${lines.join('\n\n')}\n\nSelect an option below:`,
+                text: `📦 *Category Selection — ${config.storeName}*\n\n${lines.join('\n\n')}${orderHint}`,
                 buttons: buildMainBotButtons(),
                 messageType: 'bot_category_products',
                 quoted,
@@ -344,12 +449,14 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
         case 'menu_offers': {
             inquirySessions.delete(stateKey);
+            trackSessions.delete(stateKey);
             const offers = database.getProducts({ flashSale: true, sort: 'discount' }).slice(0, 6);
-            const lines = offers.map((p, idx) =>
-                `${idx + 1}. *${p.title}*\n   Offer: *${formatPkr(p.discountPrice)}* (Was ${formatPkr(p.originalPrice)} • *-${p.discountPercentage}% OFF*)`
-            );
+            const lines = formatWhatsAppProductLines(offers);
+            const orderHint = config.storePublicUrl
+                ? `\n\nShop offers online: ${config.storePublicUrl}`
+                : '';
             return await dispatchMessage(cleanDigits, {
-                text: `🔥 *Offered Items & Flash Deals — ${config.storeName}*\n\n${lines.join('\n\n')}`,
+                text: `🔥 *Offered Items & Flash Deals — ${config.storeName}*\n\n${lines.join('\n\n')}${orderHint}`,
                 buttons: buildMainBotButtons(),
                 messageType: 'bot_offered_items',
                 quoted,
@@ -359,12 +466,14 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
         case 'menu_featured': {
             inquirySessions.delete(stateKey);
+            trackSessions.delete(stateKey);
             const featured = database.getProducts({ featured: true }).slice(0, 6);
-            const lines = featured.map((p, idx) =>
-                `${idx + 1}. *${p.title}*\n   Price: *${formatPkr(p.discountPrice)}* • Stock: ${p.stock > 0 ? `${p.stock} available` : 'Out of Stock'}`
-            );
+            const lines = formatWhatsAppProductLines(featured);
+            const orderHint = config.storePublicUrl
+                ? `\n\nShop featured gear: ${config.storePublicUrl}`
+                : '';
             return await dispatchMessage(cleanDigits, {
-                text: `⭐ *Featured Electronics — ${config.storeName}*\n\n${lines.join('\n\n')}`,
+                text: `⭐ *Featured Electronics — ${config.storeName}*\n\n${lines.join('\n\n')}${orderHint}`,
                 buttons: buildMainBotButtons(),
                 messageType: 'bot_featured_items',
                 quoted,
@@ -374,6 +483,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
         case 'menu_store': {
             inquirySessions.delete(stateKey);
+            trackSessions.delete(stateKey);
             const urlText = config.storePublicUrl
                 ? `Shop online with Cash on Delivery:\n${config.storePublicUrl}`
                 : `Visit our online storefront or showroom at *${config.storeAddress}* (${config.storeCity}).`;
@@ -386,7 +496,28 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             });
         }
 
+        case 'menu_track': {
+            inquirySessions.delete(stateKey);
+            trackSessions.set(stateKey, {
+                step: 'awaiting_order_id',
+                senderName,
+                startedAt: Date.now()
+            });
+            return await dispatchMessage(cleanDigits, {
+                text: [
+                    `📦 *Track Your COD Order — ${config.storeName}*`,
+                    'Please reply with your *Order ID* or *4-digit code*:',
+                    '• Full Order ID: *ORD-2026-9336*',
+                    '• Quick 4-digit code: *9336*'
+                ].join('\n'),
+                messageType: 'bot_track_ask_id',
+                quoted,
+                socketOverride: sock
+            });
+        }
+
         case 'menu_inquiry': {
+            trackSessions.delete(stateKey);
             inquirySessions.set(stateKey, {
                 step: 'awaiting_description',
                 senderName,
@@ -405,7 +536,10 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             });
         }
 
+        case 'greeting_menu':
         default: {
+            inquirySessions.delete(stateKey);
+            trackSessions.delete(stateKey);
             return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
         }
     }
