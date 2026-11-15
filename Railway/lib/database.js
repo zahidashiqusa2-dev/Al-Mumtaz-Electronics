@@ -149,7 +149,7 @@ function getAllVariables() {
         map.STORE_PUBLIC_URL ||
         mainSiteUrl ||
         ''
-    ) || 'https://al-mumtaz.ai.studio';
+    ) || 'https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app';
 
     return {
         raw: rows,

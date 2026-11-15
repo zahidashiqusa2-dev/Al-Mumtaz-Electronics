@@ -14,7 +14,7 @@ Complete E-Commerce Storefront, Protected Admin Dashboard (`/admin`), and 24/7 `
 ### Protected Admin Console (`/admin`)
 - Secured by `Admin_Username` & `Admin_Password`.
 - **Orders**: 3-column order manager with status/category/price/search filters, CSV export, right-hand Order Inspector, and Confirm/Reject/Dispatch/Delivered status updates.
-- **Dashboard & Analytics**: KPI metrics, category breakdown (`By Categories`), Confirmed / Dispatched / Delivered funnels, and `Navigation (24)` quick-jump drawer.
+- **Dashboard & Analytics**: KPI metrics, category breakdown (`By Categories`), Confirmed / Dispatched / Delivered funnels, and full-access Obsidian left sidebar navigation.
 - **Products**: Full CRUD, multiple image uploads (Cloudinary or SQLite fallback), and per-variant pricing.
 - **Link WhatsApp & Interactive Bot Simulator**: 8-digit pairing code setup + live WhatsApp Bot flow tester under **Notification & Bot**.
 
@@ -59,7 +59,7 @@ These three variables link your **24/7 Railway WhatsApp Bot** with your **AI Stu
 | `Admin_Username` | **Yes** | `admin` | Username to log into `/admin` |
 | `Admin_Password` | **Yes** | `YourStrongPass#2026` | Password to log into `/admin` |
 | `Admin_Whatsapp` | **Yes** | `923299931199` | Store owner WhatsApp digits (receives customer inquiries & confirmed order alerts) |
-| `Railway_URL` | **Yes** | `https://your-bot.up.railway.app` | Public HTTPS URL of your Railway service (get this after deploying Railway below) |
+| `Railway_URL` | **Yes** | `https://al-mumtaz-electronics-production-f2e7e327.up.railway.app` | Public HTTPS URL of your Railway service (no trailing slash) |
 | `API_SECRET_KEY` | **Yes** | `same-secret-as-railway` | Shared secret token matching Railway |
 | `STORE_URL` | **Yes** | `https://ais-pre-...run.app` | Public storefront URL (no trailing slash) |
 | `SITE_API_URL` | Rec. | `https://ais-pre-...run.app/api` | Public REST API base URL |
@@ -79,32 +79,30 @@ These three variables link your **24/7 Railway WhatsApp Bot** with your **AI Stu
 | `Admin_Whatsapp` | **Yes** | `923299931199` | Numeric fallback for owner WhatsApp |
 | `Admin_Username` | **Yes** | `admin` | Must match AI Studio `Admin_Username` for bridge auth |
 | `Admin_Password` | **Yes** | `YourStrongPass#2026` | Must match AI Studio `Admin_Password` for bridge auth |
-| `RAILWAY_VOLUME_MOUNT_PATH` | **Yes** | `/app/data` | Matches Railway Volume mount path so WhatsApp sessions never log out on redeploy |
 | `IS_RAILWAY_BACKEND` | **Yes** | `true` | Enables standalone Railway bot mode |
 | `PORT` | **Yes** | `3000` | Port listened by `Railway/server.js` |
+| `RAILWAY_VOLUME_MOUNT_PATH` | Opt. | *(Leave unset if using Variables only)* | **Not required!** Without a volume, the bot automatically backs up & restores your WhatsApp `creds.json` + Signal keys to your AI Studio site (`SITE_API_URL/bridge/wa-auth`) using `API_SECRET_KEY`. |
 | `STORE_PAYMENT_INFO` | Opt. | `EasyPaisa / JazzCash: 0329-9931199 ...` | Payment details shown on `💳 Pay Now` |
 
 ---
 
-## 4. Complete Setup Guide (AI Studio + Railway)
+## 4. Complete Setup Guide (AI Studio + Railway — Variables Only, No Volume Needed)
 
 ### Step 1: Publish / Get Your AI Studio Public URL
 1. In AI Studio, click **Publish / Share** (or **Deploy**) so your app gets a public URL such as:
    `https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app`
 2. Add the AI Studio variables from Section **3A** (you can add `Railway_URL` after Step 2).
 
-### Step 2: Deploy the `Railway/` Folder on Railway.app
+### Step 2: Deploy the `Railway/` Folder on Railway.app (Variables Only — No Volume Required)
 1. Create a new project in **Railway** → **Deploy from GitHub repo** and select this repository.
 2. Open **Settings → Service → Root Directory** and set it strictly to:
    ```
    Railway
    ```
-3. Attach a **Persistent Volume**:
-   - Click **+ Add Volume** → Mount Path: `/app/data`
-   - Ensures your WhatsApp `creds.json` + encryption keys survive restarts and new deployments.
-4. Open **Variables** in Railway and add all variables from Section **3B** (`STORE_URL`, `SITE_API_URL`, `API_SECRET_KEY`, `ADMIN_NUMBER`, `Admin_Whatsapp`, `Admin_Username`, `Admin_Password`, `RAILWAY_VOLUME_MOUNT_PATH=/app/data`, `IS_RAILWAY_BACKEND=true`, `PORT=3000`).
-5. Open **Settings → Networking → Generate Domain** to get your Railway HTTPS URL (e.g. `https://almumtaz-wa-bot-production.up.railway.app`).
-6. Verify Railway health by opening `https://<your-railway-domain>/api/health` — confirm `"status": "ok"`, `"siteApiConfigured": true`, and `"apiSecretConfigured": true`.
+3. **No Volume Mount Needed**: Do **not** add `RAILWAY_VOLUME_MOUNT_PATH` if your plan or dashboard only lets you configure Variables. The bot automatically uses `/tmp` locally while syncing your WhatsApp `creds.json` & encryption keys to your main AI Studio server via `SITE_API_URL` + `API_SECRET_KEY`, and rehydrates automatically on every restart or redeploy.
+4. Open **Variables** in Railway and add all variables from Section **3B** (`STORE_URL`, `SITE_API_URL`, `API_SECRET_KEY`, `ADMIN_NUMBER`, `Admin_Whatsapp`, `Admin_Username`, `Admin_Password`, `IS_RAILWAY_BACKEND=true`, `PORT=3000`).
+5. Open **Settings → Networking → Generate Domain** to get your Railway HTTPS URL (e.g. `https://al-mumtaz-electronics-production-f2e7e327.up.railway.app`).
+6. Verify Railway health by opening `https://al-mumtaz-electronics-production-f2e7e327.up.railway.app/api/health` — confirm `"status": "ok"`, `"siteApiConfigured": true`, and `"apiSecretConfigured": true`.
 
 ### Step 3: Connect Railway Back to AI Studio & Link WhatsApp
 1. Paste your Railway domain into `Railway_URL` (no trailing `/`) in AI Studio environment variables (or inside `https://<your-site>/admin` → **Settings & Vars** → **Save Variables**).

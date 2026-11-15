@@ -11,6 +11,7 @@ const {
     Browsers,
     delay
 } = require('@whiskeysockets/baileys');
+const { createJidMapper, decodeJid } = require('kango-wa');
 
 const { patchSocket } = require('./messageQueue');
 const {
@@ -37,29 +38,51 @@ function getMessageStore(cleanNumber) {
 function storeMessage(cleanNumber, jid, id, message) {
     if (!jid || !id || !message) return;
     const store = getMessageStore(cleanNumber);
-    store.set(`${jid}:${id}`, message);
-    if (store.size > MAX_STORE_PER_SESSION) {
+    const normJid = decodeJid(jid) || jid;
+    store.set(`${normJid}:${id}`, message);
+    if (normJid !== jid) {
+        store.set(`${jid}:${id}`, message);
+    }
+    while (store.size > MAX_STORE_PER_SESSION) {
         const oldestKey = store.keys().next().value;
         store.delete(oldestKey);
     }
 }
 
 function retrieveMessage(cleanNumber, jid, id) {
-    return messageStores[cleanNumber]?.get(`${jid}:${id}`);
+    const store = messageStores[cleanNumber];
+    if (!store || !jid || !id) return undefined;
+    const normJid = decodeJid(jid) || jid;
+    return store.get(`${normJid}:${id}`) || store.get(`${jid}:${id}`);
 }
 
 function attachSendCache(sock, cleanNumber) {
-    const orig = sock.sendMessage.bind(sock);
-    sock.sendMessage = async (jid, content, opts) => {
-        if (activeSessions[cleanNumber]) {
-            activeSessions[cleanNumber].lastEventAt = Date.now();
-        }
-        const result = await orig(jid, content, opts);
-        if (result?.key?.id && result?.message) {
-            storeMessage(cleanNumber, jid, result.key.id, result.message);
-        }
-        return result;
-    };
+    if (typeof sock.sendMessage === 'function') {
+        const origSend = sock.sendMessage.bind(sock);
+        sock.sendMessage = async (jid, content, opts) => {
+            if (activeSessions[cleanNumber]) {
+                activeSessions[cleanNumber].lastEventAt = Date.now();
+            }
+            const result = await origSend(jid, content, opts);
+            if (result?.key?.id && result?.message) {
+                storeMessage(cleanNumber, jid, result.key.id, result.message);
+            }
+            return result;
+        };
+    }
+
+    if (typeof sock.relayMessage === 'function') {
+        const origRelay = sock.relayMessage.bind(sock);
+        sock.relayMessage = async (jid, message, opts = {}) => {
+            if (activeSessions[cleanNumber]) {
+                activeSessions[cleanNumber].lastEventAt = Date.now();
+            }
+            if (opts?.messageId && message) {
+                storeMessage(cleanNumber, jid, opts.messageId, message);
+            }
+            return await origRelay(jid, message, opts);
+        };
+    }
 }
 
 function createSocket(version, state, cleanNumber, isPairing = false) {
@@ -83,7 +106,7 @@ function createSocket(version, state, cleanNumber, isPairing = false) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
         },
         getMessage: async (key) => {
-            return retrieveMessage(cleanNumber, key.remoteJid, key.id) || { conversation: '' };
+            return retrieveMessage(cleanNumber, key.remoteJid, key.id) || undefined;
         }
     });
 }
@@ -145,6 +168,9 @@ async function runSession(cleanNumber, sessionDir) {
 
     const sock = createSocket(version, state, cleanNumber, false);
     sock._sessionNumber = cleanNumber;
+    const jidMapper = createJidMapper();
+    jidMapper.bind(sock.ev);
+    jidMapper.patchSocket(sock);
     attachSendCache(sock, cleanNumber);
     patchSocket(sock, cleanNumber);
     attachMessageHandler(sock, cleanNumber);
@@ -168,6 +194,7 @@ async function runSession(cleanNumber, sessionDir) {
 
         if (connection === 'open') {
             console.log(`[railway-whatsapp] ✅ Store Bot +${cleanNumber} connected`);
+            try { jidMapper.primeSelf(sock.user); } catch (_) {}
             if (activeSessions[cleanNumber]) {
                 activeSessions[cleanNumber].connected = true;
                 activeSessions[cleanNumber].reconnecting = false;
@@ -265,7 +292,7 @@ setInterval(async () => {
             }
         }
     }
-}, 25000);
+}, 25000).unref();
 
 async function generatePairingCode(phoneNumber) {
     let cleanNumber = String(phoneNumber || '').replace(/\D/g, '');

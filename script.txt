@@ -1,0 +1,409 @@
+================================================================================
+AL-MUMTAZ ELECTRONICS (HASILPUR) — COMPLETE MASTER SCRIPT, ARCHITECTURE,
+DESIGN SYSTEM, DATABASE SCHEMA, API REFERENCE & 24/7 WHATSAPP BOT SPECIFICATION
+================================================================================
+
+PROJECT IDENTITY & STORE DETAILS
+--------------------------------------------------------------------------------
+• Brand Name:            Al-Mumtaz Electronics
+• City / Region:         Hasilpur, District Bahawalpur (South Punjab, Pakistan)
+• Official Address:      Main Railway Road, Hasilpur, District Bahawalpur
+• Helpline / WhatsApp:   03299931199 (+92 329 9931199 / 923299931199@s.whatsapp.net)
+• Showroom Timings:      Monday – Saturday: 10:00 AM – 9:30 PM
+                         (Friday Prayer Break: 1:00 PM – 2:30 PM)
+• Primary Payment Mode:  Cash on Delivery (COD) Nationwide + EasyPaisa / JazzCash
+• Public Storefront URL: https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app
+• Public REST API URL:   https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app/api
+• 24/7 Railway Bot URL:  https://al-mumtaz-electronics-production-f2e7e327.up.railway.app
+
+================================================================================
+1. WHAT THIS SYSTEM CREATES & DOES (END-TO-END OVERVIEW)
+================================================================================
+This project is a complete, production-grade Full-Stack E-Commerce Storefront,
+Protected Admin Console (/admin), Media CDN/SQLite Image Server, and 24/7
+Two-Way @whiskeysockets/baileys WhatsApp Automation & Order Verification Engine.
+
+It consists of two synchronized Node.js applications inside one repository:
+1) ROOT APPLICATION (/server.js + /public + /lib):
+   - Hosts the public customer e-commerce storefront (/ and /track/:orderId).
+   - Hosts the isolated, password-protected ProfitPulse-inspired Admin Console (/admin).
+   - Runs a built-in SQLite database (node:sqlite) with WAL mode that automatically
+     resolves writable storage paths (/app/data, custom DATA_DIR, or /tmp fallback
+     so Cloud Run / containerized deployments never crash with EACCES).
+   - Stores uploaded product images in Cloudinary (when Cloudinary_URI is set)
+     or directly in SQLite binary blobs served via GET /api/images/:id.
+   - Provides a complete REST API (/api/*) for products, categories, multi-variant
+     pricing, cart totals calculation, COD checkout, live order tracking, analytics,
+     and two-way WhatsApp webhook & session-backup bridges.
+   - Includes a built-in Baileys WhatsApp engine AND a seamless HTTP bridge to
+     forward outbound/inbound WhatsApp traffic to the 24/7 Railway bot service.
+
+2) STANDALONE 24/7 RAILWAY WHATSAPP BOT (/Railway folder):
+   - Dedicated microservice designed to be deployed on Railway.app (with Root
+     Directory set to `Railway`).
+   - Maintains a non-stop 24/7 @whiskeysockets/baileys WhatsApp Web socket.
+   - Supports ZERO-VOLUME (Variables-Only) deployment: even without mounting a
+     Railway Volume, it automatically backs up and restores `creds.json`, session
+     tokens, and Signal encryption key files to the main AI Studio website via
+     `/api/bridge/wa-auth/:sessionId` (and optionally PostgreSQL/Supabase).
+   - Fetches live categories, products, variant prices, and order statuses from
+     the main website in real time via `SITE_API_URL` + `API_SECRET_KEY`.
+
+================================================================================
+2. COMPLETE VISUAL & UI DESIGN SYSTEM
+================================================================================
+
+A. PUBLIC STOREFRONT DESIGN (public/index.html + public/js/storefront.js)
+--------------------------------------------------------------------------------
+• Aesthetic Persona:
+  High-Craft Light Mode Retail Flagship inspired by modern consumer electronics
+  marketplaces (clean alabaster surfaces, deep navy/slate ink, emerald trust
+  accents, and energetic amber/gold flash-sale highlights).
+• Typography:
+  - Display / Brand Header: 'Plus Jakarta Sans' & 'Inter' (700–900 weights)
+  - UI & Body Copy: 'Inter', sans-serif
+  - Numeric / Prices / Order IDs / SKUs: 'JetBrains Mono', monospace with
+    `tabular-nums` alignment.
+• Header & Animated Brand Identity:
+  - Top announcement bar with Hasilpur showroom address, free Hasilpur delivery
+    highlight, Helpline `03299931199`, and quick `Track Order` modal trigger.
+  - Main sticky header featuring ONLY "Al Mumtaz Electronics" in large, bold,
+    shimmering animated gradient typography (`font-black`, animated gradient text
+    sweep + subtle glow pulse), live product search bar, Track Order button, and
+    the Shopping Bag trigger button.
+  - Strictly NO `/admin` link or admin icon anywhere on the public storefront.
+• Shopping Bag Button & Drawer Fix:
+  - Header bag button displays the shopping bag icon + dynamic item count badge
+    ONLY (never displays the word "Cart" on the button).
+  - Slide-over drawer uses a fixed viewport flex layout (`fixed inset-y-0 right-0
+    max-w-md w-full flex flex-col h-dvh`) with a dedicated scrollable items list
+    (`flex-1 overflow-y-auto`) and pinned footer so adding many items never locks
+    or overflows the screen.
+• Hero-Free Direct-to-Catalog Layout:
+  - No bulky hero banner on the main page — opens directly into the interactive
+    category ribbon, filter controls, and live product grid.
+• Category Promotion & GPU Staggered Card Animation:
+  - Clicking any category chip (e.g. Smart TVs, Solar Inverters, Cooling, Audio,
+    Kitchen, Power Backup) or special filter (`🔥 Flash Sale / Offered`,
+    `⭐ Featured Items`, `All Products`) smoothly scrolls the catalog workspace
+    to the top, displays a dynamic Category Spotlight Banner with item count and
+    1-click "Show All Categories" reset, promotes matching items to the top of
+    the catalog, and triggers a custom cubic-bezier GPU-accelerated staggered
+    card entrance animation (`almumtazCardReveal`) with golden highlight ring.
+• Product Cards & Multi-Variant Pricing Modal:
+  - Cards show high-resolution appliance photo, discount badge (`-XX% OFF`),
+    stock status badge, brand & SKU, star rating, original strikethrough PKR
+    price, bold discounted PKR price, interactive variant selector pills, and
+    1-click Add to Bag / Buy Now buttons.
+  - Selecting a different variant (e.g., `43-Inch 4K UHD` vs `55-Inch QLED` vs
+    `65-Inch QLED`, or `3.2kW 24V` vs `6kW Dual-MPPT 48V`) dynamically updates
+    the displayed Original Price, Discount Price, Discount %, and Stock count.
+• Checkout & Instant Order Confirmation Modal:
+  - Collects Customer Full Name, Pakistan WhatsApp Mobile Number (`03XXXXXXXXX`
+    or `+923XXXXXXXXX`), Complete Street Address, City (with automatic city-wise
+    COD shipping calculation and free-shipping threshold at PKR 35,000+), Nearest
+    Landmark, Delivery Speed (Standard vs Express), and Order Notes.
+  - On submit, generates a unique Order ID (`ORD-2026-XXXX`) + 4-digit quick
+    tracking code (`XXXX`), triggers an automated WhatsApp verification message
+    to the customer's phone, and opens an animated confirmation modal with a
+    1-click **Copy Order ID** button.
+• Footer with Full Showroom Details:
+  - Displays Al-Mumtaz Electronics branding, clickable Helpline & WhatsApp number
+    `03299931199`, physical location (`Main Railway Road, Hasilpur, District
+    Bahawalpur`), working hours (`Mon–Sat 10:00 AM – 9:30 PM`), COD warranty
+    policies, and quick category/tracking links.
+
+B. ADMIN PANEL DESIGN (/admin — public/admin.html + public/js/admin.js)
+--------------------------------------------------------------------------------
+• Aesthetic Persona ("ProfitPulse" Executive Dark Sidebar + Warm Alabaster Canvas):
+  - Inspired directly by the ProfitPulse reference UI:
+    - Outer frame: Warm stone/sand background (`#D8CFC4` / `#EFECE6`).
+    - Left Navigation Rail: Deep Obsidian (`#12161F`) vertical sidebar with
+      clean icon + label navigation items, active white pill highlight
+      (`#FFFFFF` background with `#12161F` bold text), and bottom `Log out` action.
+    - Center Workspace Canvas: Crisp warm alabaster (`#FAF8F5`) with subtle
+      1px borders (`#E5E0D8`), rounded-2xl cards, status filter pills, price
+      range filters, sort dropdowns, and tabular data rows.
+    - Right Context Inspector Drawer (in Orders view): Dedicated white card panel
+      showing the selected order's customer avatar, name, quick Call / WhatsApp /
+      Copy ID circular action buttons, itemized product thumbnails & line totals,
+      Grand Total, 1-click Status buttons (`Confirm`, `Dispatch`, `Deliver`,
+      `Cancel / Reject`), `Track`, and `Resend WhatsApp`.
+• Main Sidebar Navigation (22 Direct Feature & Action Buttons — No Cluttered
+  "Navigation 24" Popup):
+  1.  `Dashboard` (Executive KPI overview, revenue cards & quick action launcher)
+  2.  `Orders` (ProfitPulse 3-column order table + right-hand Order Inspector)
+  3.  `Pending Verify` (1-click filter for orders awaiting WhatsApp confirmation)
+  4.  `Confirmed` (1-click filter for accepted/confirmed COD orders)
+  5.  `Dispatched` (1-click filter for parcels in transit)
+  6.  `Delivered` (1-click filter for completed deliveries)
+  7.  `Cancelled` (1-click filter for cancelled/rejected orders)
+  8.  `Products` (Full inventory manager, stock levels, featured/flash toggles)
+  9.  `Add Product` (Opens product & per-variant pricing creator modal)
+  10. `Variant Pricing` (Manage different prices & stock per variant/model size)
+  11. `Categories` (Create, inspect & delete store categories)
+  12. `By Categories` (Category-wise revenue, units sold & order status breakdown)
+  13. `Payments` (COD vs Online EasyPaisa/JazzCash ledger & payment config)
+  14. `Customers` (Customer directory aggregated by phone, city & lifetime spend)
+  15. `Reports` (Fulfillment funnel, city breakdown & printable/CSV summaries)
+  16. `Statistic` (Conversion rates, average order value & top-selling SKUs)
+  17. `Export CSV` (Instant 1-click download of orders & accounting spreadsheet)
+  18. `Media CDN` (Multi-image drag-and-drop uploader for Cloudinary / SQLite)
+  19. `Inquiries` (Customer WhatsApp inquiries forwarded from the bot)
+  20. `Notification` (Live WhatsApp outbound/inbound audit logs & Bot Simulator)
+  21. `Help / Link WA` (8-digit WhatsApp Pairing Code generator & Railway tester)
+  22. `Settings` (Live environment variables editor: Admin credentials, Railway_URL,
+      STORE_URL, API_SECRET_KEY, Cloudinary_URI, COD shipping rates)
+
+================================================================================
+3. COMPLETE WHATSAPP BOT SPECIFICATION (@whiskeysockets/baileys)
+================================================================================
+
+A. STRICT BOT BOUNDARIES
+--------------------------------------------------------------------------------
+• Built exclusively for Al-Mumtaz Electronics customer shopping, search, order
+  tracking, payment instructions, showroom info, solar guidance, inquiries, and
+  two-way COD order verification.
+• Strictly EXCLUDES `.menu`, `.ping`, song downloaders, general-purpose commands,
+  admin product creation via WhatsApp, or any "Admin Direct" button.
+
+B. INTERACTIVE MESSAGE PROTOCOLS (lib/buttonHelper.js)
+--------------------------------------------------------------------------------
+• Uses `@whiskeysockets/baileys` `generateWAMessageFromContent` + ` proto.Message
+  .InteractiveMessage` (`nativeFlowMessage`) to send rich WhatsApp interactive
+  cards with:
+  - Header title + optional product/store image attachment (`imageMessage`)
+  - Body text with clean formatting
+  - Footer text (`Al-Mumtaz Electronics • Hasilpur`)
+  - Interactive buttons (`quick_reply` buttons + `cta_url` clickable website links)
+  - Interactive single-select dropdown lists (`single_select` Store Menu & Categories)
+• Includes automatic fallback to formatted text if a client/device does not
+  render native flow proto messages.
+
+C. ALL WHATSAPP BOT WORKFLOWS & FEATURES
+--------------------------------------------------------------------------------
+1. GREETINGS & GENERAL MESSAGES -> WELCOME MENU + SITE DETAILS
+   - Triggers on: `Hi`, `Hello`, `Hey`, `Salam`, `Assalamualaikum`, `AoA`, `Menu`,
+     `Shop`, `Start`, 👋, or any unrecognized general message.
+   - Responds with:
+     • Personalized greeting (`Assalam-o-Alaikum *<Customer Name>*!`)
+     • Complete Site Details Block:
+       - 🌐 Website: `https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app`
+       - 📍 Showroom: `Main Railway Road, Hasilpur, District Bahawalpur (Hasilpur)`
+       - 📞 Phone / WhatsApp: `03299931199`
+       - 🕒 Hours: `Mon–Sat 10:00 AM – 9:30 PM`
+       - 🛡️ Service: `Genuine Brand Warranty · Nationwide COD`
+     • 5 Interactive Quick-Action Buttons:
+       1) `🛍️ Browse Categories` (id: `menu_categories`)
+       2) `🔍 Search Products` (id: `menu_search`)
+       3) `📦 Track My Order` (id: `menu_track`)
+       4) `💳 Pay Now` (id: `menu_pay`)
+       5) `🌐 Visit Online Store` (CTA URL -> `STORE_URL`)
+     • Expandable `📋 Open Store Menu` List containing 10 rows across 2 sections:
+       - Section 1 (Shop & Track): Browse Categories, Offered Items (Flash Sale),
+         Featured Electronics, Search Products, Track My Order, Pay Now / COD Info.
+       - Section 2 (Store Info & Solar Desk): Showroom & Timings, Warranty &
+         Delivery, Solar Load Guide, Contact For Inquiry.
+
+2. LIVE CATEGORIES & PRODUCT CARDS (`menu_categories` & `cat_<slug>`)
+   - Fetches live categories from `GET ${SITE_API_URL}/categories`.
+   - Sends an interactive `single_select` list of all store departments with live
+     stock counts.
+   - Selecting any category (`cat_smart-tvs`, `cat_solar-inverters`,
+     `cat_cooling-appliances`, `cat_audio-wearables`, `cat_kitchen-appliances`,
+     `cat_power-backup`) fetches live products from
+     `GET ${SITE_API_URL}/products?category=<slug>` and sends interactive Product
+     Cards complete with:
+     • Product Image
+     • Title, SKU, Stock status (`✅ In Stock` / `⚠️ Out of Stock`)
+     • Sale Price, Original Price & Discount %
+     • Available Variants & per-variant prices
+     • Official Warranty info & Store Link
+     • 4 Interactive Buttons on every card:
+       - `🛒 Order Now (COD)` (id: `buy_<productId>`)
+       - `💳 Pay Online` (id: `pay_<productId>`)
+       - `🔍 Search Another Item` (id: `menu_search`)
+       - `🌐 View on Website` (CTA URL -> `STORE_URL`)
+
+3. INTERACTIVE PRODUCT SEARCH (`menu_search` or `search <keyword>`)
+   - Clicking `🔍 Search Products` sets customer session to `awaiting_query` and
+     prompts them to type any product name, brand, or SKU (e.g., `QLED TV`,
+     `6kW Inverter`, `Gree AC`, `Fan`).
+   - Queries `GET ${SITE_API_URL}/products/search?q=<query>` and returns matching
+     interactive Product Cards with `Order Now (COD)`, `Pay Online`, and `Search`.
+
+4. IN-CHAT WHATSAPP COD CHECKOUT (`buy_<productId>`) + NATIVE CATALOG SUPPORT
+   - Also listens for WhatsApp Business `productMessage` and `orderMessage` payloads.
+   - Clicking `🛒 Order Now (COD)` on any product card starts a 2-step conversational
+     checkout state machine:
+     • Step 1 (`awaiting_name`): Asks for the customer's Full Name.
+     • Step 2 (`awaiting_address`): Asks for Complete Delivery Address & City.
+   - Automatically infers the city from the address, calculates COD shipping,
+     creates the order via `POST ${SITE_API_URL}/orders`, alerts the Admin on
+     WhatsApp, and immediately sends the interactive COD Order Verification prompt.
+
+5. ONLINE PAYMENT & COD DETAILS (`menu_pay` or `pay_<id>`)
+   - Sends EasyPaisa / JazzCash (`0329-9931199 — Al-Mumtaz Electronics Hasilpur`)
+     and nationwide Cash on Delivery instructions along with a clickable checkout
+     or order tracking URL button.
+
+6. LIVE ORDER TRACKING (`menu_track`, `ORD-2026-9336`, or 4-digit `9336`)
+   - Customers can tap `📦 Track My Order` or directly send their full Order ID
+     (`ORD-2026-9336`) or 4-digit code (`9336`) at any time.
+   - Fetches live status (`Pending WhatsApp Confirmation`, `Confirmed`,
+     `Dispatched`, `Delivered`, `Cancelled`), itemized list, destination address,
+     and Grand Total, plus a `📦 Track on Website` CTA URL button pointing to
+     `${STORE_URL}/track/${orderId}`.
+
+7. TWO-WAY WEBSITE COD ORDER VERIFICATION, ACCEPT THANK-YOU & REJECT APOLOGY
+   - Triggered automatically on website checkout (`POST /api/orders/checkout`) or
+     webhook (`POST /webhook/new-website-order`), or when Admin clicks `Resend WA`.
+   - Sends an itemized COD Verification Receipt to the customer's WhatsApp with
+     3 interactive buttons:
+     • `✅ Confirm Order` (id: `confirm_order_<orderId>`)
+     • `💳 Pay Now` (id: `pay_<orderId>`)
+     • `❌ Cancel Order` (id: `cancel_order_<orderId>`)
+     (Also accepts text replies: `CONFIRM`, `ACCEPT`, `YES CONFIRM`, `REJECT`,
+     `CANCEL`, `DECLINE`, `CONFIRM ORD-...`, `REJECT ORD-...`).
+   - WHEN ACCEPTED / CONFIRMED (by Customer on WhatsApp OR by Admin in `/admin`):
+     • Updates order status to `Confirmed` (`PATCH /api/orders/:id/status`).
+     • Sends an automatic **Acceptance & Thank You** message:
+       `✅ Thank You, <Customer Name>! Your order #<OrderId> has been ACCEPTED & CONFIRMED at Al-Mumtaz Electronics (Hasilpur)...`
+       with item count, COD total, 4-digit tracking code, clickable live tracking
+       link (`${STORE_URL}/track/${orderId}`), showroom helpline & address, and
+       prompts `"🛍️ Would you like to start shopping on WhatsApp?"` with the full
+       interactive store menu buttons & list.
+     • Sends an instant order confirmation alert to `Admin_Whatsapp`.
+   - WHEN REJECTED / CANCELLED (by Customer on WhatsApp OR by Admin in `/admin`):
+     • Updates order status to `Cancelled`.
+     • Sends an automatic **Cancellation & Sincere Apology** message:
+       `🙏 We Sincerely Apologize, <Customer Name>. Your order #<OrderId> at Al-Mumtaz Electronics (Hasilpur) has been CANCELLED / REJECTED. We are truly sorry for any inconvenience caused. No Cash on Delivery (COD) charges will be collected...`
+       along with the store website URL, Helpline `03299931199`, showroom address,
+       and interactive buttons to browse or contact support.
+   - WHEN DISPATCHED OR DELIVERED (in `/admin`):
+     • Automatically sends a WhatsApp dispatch alert or delivery thank-you note
+       with live tracking link and helpline details.
+
+8. EXTRA STORE BOT FEATURES
+   - `🏪 Showroom & Timings` (`menu_about` or keywords like `details`, `site`,
+     `website`, `address`, `location`, `timings`, `phone`, `helpline`, `where is
+     your shop`): Sends full showroom address, timings, phone, website, and
+     why-shop-with-us highlights.
+   - `🛡️ Warranty & Delivery` (`menu_warranty` or `warranty`, `delivery`, `rates`):
+     Sends official brand warranty policy, 7-day replacement guarantee, and
+     city-wise COD shipping chart (Hasilpur FREE, Bahawalpur/Vehari PKR 200,
+     Multan PKR 300, Lahore PKR 350, Free Nationwide COD above PKR 35,000).
+   - `☀️ Solar Load Guide` (`menu_solar` or `solar`, `inverter`): Sends 3kW, 6kW,
+     and 10kW hybrid solar inverter load sizing guide with direct buttons to view
+     Solar Inverters or request a custom quote.
+   - `📝 Contact For Inquiry` (`almumtaz_inquiry`): Captures customer's inquiry
+     and forwards it directly to `Admin_Whatsapp` + logs it in `/admin` → `Inquiries`.
+
+================================================================================
+4. DATABASE TABLES & STORAGE ARCHITECTURE (lib/database.js)
+================================================================================
+SQLite database (`almumtaz_store.sqlite`) with automatic writable directory
+resolution (`lib/storagePaths.js`):
+1. `store_variables`     — Key/value store for Admin credentials, Railway_URL,
+                           STORE_URL, API_SECRET_KEY, Cloudinary_URI, city COD rates.
+2. `categories`          — Store departments (`id`, `name`, `slug`, `icon`, `image`,
+                           `description`, `sortOrder`).
+3. `products`            — Full catalog (`id`, `title`, `slug`, `sku`, `description`,
+                           `imagesJson`, `categorySlug`, `brand`, `originalPrice`,
+                           `discountPrice`, `discountPercentage`, `stock`, `tagsJson`,
+                           `isFeatured`, `isFlashSale`, `variantsJson`,
+                           `variantPricingJson`, `rating`, `soldCount`, `warranty`).
+4. `orders`              — Customer COD orders (`orderId`, `customerName`,
+                           `whatsappNumber`, `whatsappDigits`, `shippingAddress`,
+                           `city`, `nearestLandmark`, `orderNotes`, `itemsJson`,
+                           `subtotal`, `discountTotal`, `codDeliveryCharges`,
+                           `grandTotal`, `paymentMethod`, `orderStatus`,
+                           `whatsappMessageId`, `whatsappDispatchMode`,
+                           `whatsappConfirmedAt`, `createdAt`).
+5. `inquiries`           — Customer support inquiries captured via WhatsApp bot.
+6. `whatsapp_logs`       — Complete audit log of inbound & outbound WhatsApp messages.
+7. `sessions`            — Active WhatsApp linked numbers & connection status.
+8. `admin_sessions`      — Token-based `/admin` login sessions (72-hour expiry).
+9. `media_images`        — Binary image storage fallback when Cloudinary is unset.
+10. `wa_auth_backups`    — Zero-Volume Railway WhatsApp session backup table
+                           (`sessionId`, `credsJson`, `keysJson`, `sessionToken`,
+                           `updatedAt`) used by `/api/bridge/wa-auth`.
+
+================================================================================
+5. COMPLETE FILE TREE & MODULE RESPONSIBILITIES
+================================================================================
+/server.js                      — Main Express server, storefront/admin routing,
+                                  REST API endpoints, Railway bridge & keepalive.
+/lib/storagePaths.js            — Safe writable directory resolver (prevents EACCES
+                                  on Cloud Run / containers by falling back to /tmp).
+/lib/database.js                — SQLite schema, seed data, CRUD helpers, analytics
+                                  engine, and `wa_auth_backups` persistence.
+/lib/storeLogic.js              — Pure business logic: Pakistan phone normalization,
+                                  multi-variant pricing, order totals, analytics
+                                  computation, WhatsApp message formatters (receipt,
+                                  accept thank-you, reject apology, site details),
+                                  and incoming bot action parser.
+/lib/storeLogic.test.js         — 18 comprehensive Node.js unit & parity tests.
+/lib/mediaStore.js              — Cloudinary + SQLite binary image upload manager.
+/lib/buttonHelper.js            — Baileys InteractiveMessage (`nativeFlowMessage`)
+                                  builder for buttons, CTA URLs, and lists.
+/lib/messageQueue.js            — Per-session rate-limited WhatsApp send queue.
+/lib/authState.js               — Local + cloud Baileys multi-file auth state.
+/lib/sessionManager.js          — Baileys socket lifecycle, 8-digit pairing code
+                                  generator, auto-reconnect, and session rehydration.
+/lib/whatsappService.js         — Customer WhatsApp state machine, catalog browser,
+                                  in-chat checkout, order confirmation/rejection,
+                                  and Railway bridge dispatcher.
+/public/index.html              — Customer E-Commerce Storefront HTML & CSS animations.
+/public/js/api.js               — Frontend API client & localStorage cart state.
+/public/js/storefront.js        — Storefront UI controller, category promotion
+                                  animations, variant price switcher, cart drawer,
+                                  checkout modal, and live order tracker.
+/public/admin.html              — ProfitPulse-styled Protected Admin Console HTML.
+/public/js/admin.js             — Admin dashboard controller (22 sidebar actions,
+                                  Order Inspector, Variant Pricing editor, Analytics
+                                  By Categories, Media uploader, WhatsApp Linker).
+/Railway/server.js              — Standalone 24/7 Railway WhatsApp Bot Express server.
+/Railway/package.json           — Standalone dependencies for Railway deployment.
+/Railway/.env.example           — Template of Railway environment variables.
+/Railway/lib/storagePaths.js    — Railway writable path resolver (supports zero-volume).
+/Railway/lib/database.js        — Railway local SQLite cache & variable store.
+/Railway/lib/storeLogic.js      — Synchronized store logic & message formatters.
+/Railway/lib/buttonHelper.js    — Baileys interactive message sender for Railway.
+/Railway/lib/messageQueue.js    — Rate-limited outbound WhatsApp queue for Railway.
+/Railway/lib/authState.js       — Zero-Volume Remote Auth Sync (backs up & restores
+                                  `creds.json` + Signal keys to Main Site `/api/bridge/wa-auth`
+                                  and optional Supabase Postgres).
+/Railway/lib/sessionManager.js  — 24/7 Baileys connection manager on Railway.
+/Railway/lib/whatsappService.js — Live API-driven WhatsApp bot handler on Railway.
+
+================================================================================
+6. ENVIRONMENT VARIABLES & ZERO-VOLUME DEPLOYMENT GUIDE
+================================================================================
+
+A. AI STUDIO VARIABLES (Main Website & Admin)
+--------------------------------------------------------------------------------
+• Admin_Username       = admin
+• Admin_Password       = <YourStrongAdminPassword>
+• Admin_Whatsapp       = 923299931199
+• Railway_URL          = https://al-mumtaz-electronics-production-f2e7e327.up.railway.app
+• STORE_URL            = https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app
+• SITE_API_URL         = https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app/api
+• API_SECRET_KEY       = <SharedSecretTokenMatchingRailway>
+• Cloudinary_URI       = cloudinary://api_key:api_secret@cloud_name  (Optional)
+• STORE_PAYMENT_INFO   = EasyPaisa / JazzCash: 0329-9931199 (Al-Mumtaz Electronics Hasilpur)
+
+B. RAILWAY VARIABLES (24/7 WhatsApp Bot — Root Directory: `Railway`)
+--------------------------------------------------------------------------------
+• STORE_URL            = https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app
+• SITE_API_URL         = https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app/api
+• API_SECRET_KEY       = <SharedSecretTokenMatchingAIStudio>
+• ADMIN_NUMBER         = 923299931199@s.whatsapp.net
+• Admin_Whatsapp       = 923299931199
+• Admin_Username       = <SameAsAIStudio>
+• Admin_Password       = <SameAsAIStudio>
+• IS_RAILWAY_BACKEND   = true
+• PORT                 = 3000
+*(Note: `RAILWAY_VOLUME_MOUNT_PATH` is NOT required. When omitted, Railway
+automatically syncs and restores WhatsApp auth state via `SITE_API_URL/bridge/wa-auth`.)*
+================================================================================

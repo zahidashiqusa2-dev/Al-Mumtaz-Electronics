@@ -9,12 +9,14 @@ const {
     formatPkr,
     buildStoreBaseUrl,
     buildSiteApiUrl,
+    formatSiteDetailsSummary,
     formatStoreAboutMessage,
     formatWarrantyDeliveryMessage,
     formatSolarAdvisorMessage,
     buildWelcomeStoreMenuLists,
     formatOrderReceiptText,
     formatOrderConfirmationThanksAndShopPrompt,
+    formatOrderRejectionApologyMessage,
     formatOrderTrackingMessage,
     formatProductWhatsAppCard,
     formatPaymentOptionsMessage,
@@ -49,10 +51,13 @@ function getSessionManager() {
 function toJid(phoneOrJid) {
     const raw = String(phoneOrJid || '').trim();
     if (!raw) return null;
-    if (raw.includes('@s.whatsapp.net')) return raw;
-    const normalized = normalizePakistanWhatsApp(raw);
+    const cleaned = raw.replace(/:\d+@/, '@');
+    if (cleaned.endsWith('@s.whatsapp.net') || cleaned.endsWith('@lid')) {
+        return cleaned;
+    }
+    const normalized = normalizePakistanWhatsApp(cleaned);
     if (normalized.valid) return normalized.jid;
-    const digits = raw.replace(/\D/g, '');
+    const digits = cleaned.replace(/\D/g, '');
     return digits ? `${digits}@s.whatsapp.net` : null;
 }
 
@@ -62,6 +67,13 @@ function unwrapBaileysMessageContent(msg) {
     if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message;
     if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message;
     if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
+    if (m.viewOnceMessageV2Extension?.message) m = m.viewOnceMessageV2Extension.message;
+    if (m.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message;
+    if (m.editedMessage?.message?.protocolMessage?.editedMessage) {
+        m = m.editedMessage.message.protocolMessage.editedMessage;
+    } else if (m.editedMessage?.message) {
+        m = m.editedMessage.message;
+    }
     return m;
 }
 
@@ -69,9 +81,21 @@ function extractTextFromBaileysMessage(msg) {
     const m = unwrapBaileysMessageContent(msg);
     if (!m) return '';
 
-    if (m.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
+    if (m.templateButtonReplyMessage?.selectedId || m.templateButtonReplyMessage?.selectedDisplayText) {
+        return String(m.templateButtonReplyMessage.selectedId || m.templateButtonReplyMessage.selectedDisplayText).trim();
+    }
+
+    if (m.buttonsResponseMessage?.selectedButtonId || m.buttonsResponseMessage?.selectedDisplayText) {
+        return String(m.buttonsResponseMessage.selectedButtonId || m.buttonsResponseMessage.selectedDisplayText).trim();
+    }
+
+    const interactiveRes =
+        m.interactiveResponseMessage ||
+        m.viewOnceMessage?.message?.interactiveResponseMessage ||
+        m.viewOnceMessageV2?.message?.interactiveResponseMessage;
+    if (interactiveRes?.nativeFlowResponseMessage?.paramsJson) {
         try {
-            const params = JSON.parse(m.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
+            const params = JSON.parse(interactiveRes.nativeFlowResponseMessage.paramsJson);
             if (params.id || params.display_text) {
                 return String(params.id || params.display_text).trim();
             }
@@ -86,10 +110,6 @@ function extractTextFromBaileysMessage(msg) {
     }
 
     return String(
-        m.buttonsResponseMessage?.selectedButtonId ||
-        m.buttonsResponseMessage?.selectedDisplayText ||
-        m.templateButtonReplyMessage?.selectedId ||
-        m.templateButtonReplyMessage?.selectedDisplayText ||
         m.listResponseMessage?.singleSelectReply?.selectedRowId ||
         m.listResponseMessage?.title ||
         m.conversation ||
@@ -216,7 +236,7 @@ async function dispatchMessage(recipient, {
     if (!jid) {
         return { delivered: false, mode: 'invalid_recipient', error: 'Invalid recipient phone number.' };
     }
-    const digits = jid.split('@')[0];
+    const digits = jid.split('@')[0].split(':')[0];
     const { config } = database.getAllVariables();
     const resolvedFooter = footer || `${config.storeName} • ${config.storeCity}`;
     const storeBaseUrl = buildStoreBaseUrl(config);
@@ -279,14 +299,14 @@ async function dispatchMessage(recipient, {
 
 async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null, quoted = null) {
     const { config } = database.getAllVariables();
-    const storeUrl = buildStoreBaseUrl(config);
     const greeting = customerName && customerName !== 'Customer'
         ? `Assalam-o-Alaikum *${customerName}*!`
         : 'Assalam-o-Alaikum!';
 
     const text = [
         `${greeting} Welcome to *${config.storeName}* (${config.storeCity}).`,
-        `Shop Online 24/7: ${storeUrl}`,
+        '',
+        formatSiteDetailsSummary(config),
         '',
         'Choose a button or open *Store Menu* below to shop, search, pay, track orders, or view showroom & solar info:',
         '• Tap *Browse Categories* or *Search Products* to view live items & order in chat',
@@ -306,9 +326,9 @@ async function sendFiveButtonStoreMenu(recipient, customerName = '', sock = null
     });
 }
 
-async function sendProductCardsList(cleanDigits, items, headingText, config, sock = null, quoted = null) {
+async function sendProductCardsList(recipientTarget, items, headingText, config, sock = null, quoted = null) {
     if (!Array.isArray(items) || items.length === 0) {
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(recipientTarget, {
             title: 'No Matching Products',
             text: `${headingText}\n\nNo items found right now. Try searching another keyword or browse our categories below:`,
             buttons: buildWelcomeMenuButtons(config),
@@ -321,7 +341,7 @@ async function sendProductCardsList(cleanDigits, items, headingText, config, soc
     const storeUrl = buildStoreBaseUrl(config);
     const cards = items.slice(0, 4);
 
-    await dispatchMessage(cleanDigits, {
+    await dispatchMessage(recipientTarget, {
         title: headingText,
         text: `Showing ${cards.length} item(s) from *${config.storeName}*. Tap *Order Now (COD)* or *Pay Online* on any item card, or shop full catalog at ${storeUrl}`,
         buttons: [
@@ -335,7 +355,7 @@ async function sendProductCardsList(cleanDigits, items, headingText, config, soc
     });
 
     for (const p of cards) {
-        await dispatchMessage(cleanDigits, {
+        await dispatchMessage(recipientTarget, {
             title: p.title,
             text: formatProductWhatsAppCard(p, config),
             imageUrl: p.images?.[0] || '',
@@ -370,10 +390,11 @@ async function sendOrderConfirmationPrompt(order) {
     };
 }
 
-async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawText, orderId, decision, sock, quoted }) {
+async function forwardOrderDecisionToMainSite({ senderDigits, replyTarget, senderName, rawText, orderId, decision, sock, quoted }) {
     const { config } = database.getAllVariables();
     const followUpButtons = buildWelcomeMenuButtons(config);
     const apiBase = buildSiteApiUrl(config);
+    const target = replyTarget || senderDigits;
 
     if (apiBase) {
         try {
@@ -381,21 +402,17 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
                 const statusPayload = decision === 'Confirmed' ? 'ACCEPTED' : 'CANCELLED';
                 const patchRes = await axios.patch(
                     `${apiBase}/orders/${encodeURIComponent(orderId)}/status`,
-                    { status: statusPayload },
+                    { status: statusPayload, notifyCustomer: false },
                     { headers: apiHeaders(config), timeout: 8000 }
                 );
                 const updated = patchRes.data?.order;
                 if (updated) {
                     const replyText = decision === 'Confirmed'
                         ? formatOrderConfirmationThanksAndShopPrompt(updated, config)
-                        : [
-                            `❌ Your order *#${updated.orderId}* has been *CANCELLED* as requested. No charges apply.`,
-                            '',
-                            `Would you like to continue shopping at *${config.storeName}*? Choose an option below anytime:`
-                        ].join('\n');
+                        : formatOrderRejectionApologyMessage(updated, config);
 
-                    await dispatchMessage(senderDigits, {
-                        title: decision === 'Confirmed' ? `Order #${updated.orderId} Confirmed` : `Order #${updated.orderId} Cancelled`,
+                    await dispatchMessage(target, {
+                        title: decision === 'Confirmed' ? `Order #${updated.orderId} Confirmed` : `Order #${updated.orderId} Cancelled / Rejected`,
                         text: replyText,
                         footer: `${config.storeName} • ${config.storeCity}`,
                         buttons: followUpButtons,
@@ -429,10 +446,11 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
             );
             const outcome = res.data?.outcome;
             if (outcome?.replyText) {
-                await dispatchMessage(senderDigits, {
+                await dispatchMessage(target, {
                     text: outcome.replyText,
                     footer: `${config.storeName} • ${config.storeCity}`,
                     buttons: outcome.followUpButtons || followUpButtons,
+                    lists: buildWelcomeStoreMenuLists(config),
                     messageType: decision === 'Confirmed' ? 'order_confirmed_reply' : 'order_cancelled_reply',
                     quoted,
                     socketOverride: sock
@@ -445,18 +463,19 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
     const storeUrl = buildStoreBaseUrl(config);
     const fallbackMsg = decision === 'Confirmed'
         ? [
-            `✅ *Thank You!* Your order${orderId ? ` *#${orderId}*` : ''} is *CONFIRMED* at *${config.storeName}*.`,
+            `✅ *Thank You!* Your order${orderId ? ` *#${orderId}*` : ''} is *ACCEPTED & CONFIRMED* at *${config.storeName}*.`,
             orderId ? `Live Tracking Link: ${storeUrl}/track/${orderId}` : '',
             '',
             '🛍️ *Would you like to start shopping on WhatsApp?*',
             'Tap any button below to browse items, offers, or track your order:'
         ].filter(Boolean).join('\n')
-        : `Your *${decision}* request${orderId ? ` for Order *#${orderId}*` : ''} has been received by ${config.storeName}.`;
+        : formatOrderRejectionApologyMessage({ orderId }, config);
 
-    await dispatchMessage(senderDigits, {
+    await dispatchMessage(target, {
         text: fallbackMsg,
         footer: `${config.storeName} • ${config.storeCity}`,
         buttons: followUpButtons,
+        lists: buildWelcomeStoreMenuLists(config),
         messageType: 'order_decision_ack',
         quoted,
         socketOverride: sock
@@ -464,13 +483,14 @@ async function forwardOrderDecisionToMainSite({ senderDigits, senderName, rawTex
     return { found: false, replyText: fallbackMsg, followUpButtons };
 }
 
-async function handleRailwayOrderTracking(cleanDigits, query, config, sock = null, quoted = null) {
+async function handleRailwayOrderTracking(cleanDigits, query, config, sock = null, quoted = null, replyTarget = '') {
     trackSessions.delete(cleanDigits);
+    const target = replyTarget || cleanDigits;
     const storeUrl = buildStoreBaseUrl(config);
     const apiBase = buildSiteApiUrl(config);
 
     if (!apiBase) {
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(target, {
             text: `Order tracking requires SITE_API_URL to be configured on Railway. Tap *Contact For Inquiry* to check order *${query}*.`,
             buttons: buildWelcomeMenuButtons(config),
             messageType: 'bot_track_unavailable',
@@ -486,7 +506,7 @@ async function handleRailwayOrderTracking(cleanDigits, query, config, sock = nul
         );
         const order = res.data?.order;
         if (order) {
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(target, {
                 title: `Order #${order.orderId} Status`,
                 text: formatOrderTrackingMessage(order, config),
                 footer: `${config.storeName} • Order Tracking`,
@@ -501,7 +521,7 @@ async function handleRailwayOrderTracking(cleanDigits, query, config, sock = nul
         }
     } catch (_) {}
 
-    return await dispatchMessage(cleanDigits, {
+    return await dispatchMessage(target, {
         title: 'Order Not Found',
         text: [
             `🔍 We could not find an order matching *${query}*.`,
@@ -514,16 +534,17 @@ async function handleRailwayOrderTracking(cleanDigits, query, config, sock = nul
     });
 }
 
-async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, session, config, sock, quoted) {
+async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, session, config, sock, quoted, replyTarget = '') {
+    const target = replyTarget || cleanDigits;
     const text = String(rawText || '').trim();
     if (/^(?:cancel|stop|exit|menu)$/i.test(text)) {
         checkoutSessions.delete(cleanDigits);
-        return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
+        return await sendFiveButtonStoreMenu(target, senderName, sock, quoted);
     }
 
     if (session.step === 'awaiting_name') {
         if (text.length < 2) {
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(target, {
                 text: 'Please reply with your *Full Name* to place your COD order (or type *cancel* to exit):',
                 messageType: 'bot_checkout_retry_name',
                 quoted,
@@ -535,7 +556,7 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
             step: 'awaiting_address',
             customerName: text
         });
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(target, {
             title: 'Step 2 of 2: Delivery Address',
             text: `Thanks, *${text}*! Now please reply with your *Complete Delivery Address & City* (e.g. *House 14, Model Town, Hasilpur*):`,
             messageType: 'bot_checkout_ask_address',
@@ -546,7 +567,7 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
 
     if (session.step === 'awaiting_address') {
         if (text.length < 5) {
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(target, {
                 text: 'Please share a complete street address and city so our courier can deliver your parcel:',
                 messageType: 'bot_checkout_retry_address',
                 quoted,
@@ -575,7 +596,10 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
                 );
                 if (res.data?.order) {
                     const order = res.data.order;
-                    await sendOrderConfirmationPrompt(order);
+                    await sendOrderConfirmationPrompt({
+                        ...order,
+                        whatsappDigits: String(target).endsWith('@lid') ? target : (order.whatsappDigits || cleanDigits)
+                    });
                     const adminNorm = normalizePakistanWhatsApp(config.adminWhatsappNumber);
                     if (adminNorm.valid) {
                         await dispatchMessage(adminNorm.digits, {
@@ -594,7 +618,7 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
             } catch (_) {}
         }
 
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(target, {
             title: 'Order Request Received',
             text: `Thanks *${session.customerName}*! Your COD request has been logged for *${text}*. Our team will confirm shortly.`,
             buttons: buildWelcomeMenuButtons(config),
@@ -605,10 +629,11 @@ async function handleInChatCheckoutStep(cleanDigits, senderName, rawText, sessio
     }
 }
 
-async function processIncomingMessage({ senderJid, senderName = 'Customer', rawText = '', catalogPayload = null, sock = null, quoted = null }) {
-    const cleanDigits = String(senderJid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+async function processIncomingMessage({ senderJid, replyJid = '', senderName = 'Customer', rawText = '', catalogPayload = null, sock = null, quoted = null }) {
+    const cleanDigits = String(senderJid || replyJid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
     if (!cleanDigits) return { handled: false };
 
+    const replyTarget = toJid(replyJid || senderJid) || cleanDigits;
     const { config } = database.getAllVariables();
     const stateKey = cleanDigits;
 
@@ -617,7 +642,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         recipient: `+${cleanDigits}`,
         messageType: catalogPayload ? `catalog_${catalogPayload.kind}` : 'customer_message',
         summary: String(rawText || '').slice(0, 220) || '(empty)',
-        payload: { senderName, rawText, catalogPayload },
+        payload: { senderName, rawText, catalogPayload, replyTarget },
         status: 'received'
     });
 
@@ -626,10 +651,10 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         if (catalogPayload.kind === 'product' && catalogPayload.title) {
             const matched = (await fetchLiveProducts(config, { search: catalogPayload.title })).slice(0, 3);
             if (matched.length > 0) {
-                return await sendProductCardsList(cleanDigits, matched, 'WhatsApp Catalog Match', config, sock, quoted);
+                return await sendProductCardsList(replyTarget, matched, 'WhatsApp Catalog Match', config, sock, quoted);
             }
         }
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(replyTarget, {
             title: 'WhatsApp Catalog Selection',
             text: `Thanks for sharing an item from our WhatsApp Catalog! Use the options below to order, search, or contact our showroom:`,
             buttons: buildWelcomeMenuButtons(config),
@@ -644,6 +669,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         clearCustomerSessions(stateKey);
         return await forwardOrderDecisionToMainSite({
             senderDigits: cleanDigits,
+            replyTarget,
             senderName,
             rawText,
             orderId: parsedAction.orderId || null,
@@ -662,7 +688,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
     const pendingCheckout = checkoutSessions.get(stateKey);
     if (pendingCheckout && !isExplicitMenuOrAction) {
-        return await handleInChatCheckoutStep(cleanDigits, senderName, rawText, pendingCheckout, config, sock, quoted);
+        return await handleInChatCheckoutStep(cleanDigits, senderName, rawText, pendingCheckout, config, sock, quoted, replyTarget);
     }
 
     const pendingSearch = searchSessions.get(stateKey);
@@ -670,16 +696,16 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         searchSessions.delete(stateKey);
         const query = String(rawText || '').trim();
         const matches = await fetchLiveProducts(config, { search: query });
-        return await sendProductCardsList(cleanDigits, matches, `Search Results for "${query}"`, config, sock, quoted);
+        return await sendProductCardsList(replyTarget, matches, `Search Results for "${query}"`, config, sock, quoted);
     }
 
     const pendingTrack = trackSessions.get(stateKey);
     if (pendingTrack && pendingTrack.step === 'awaiting_order_id' && !isExplicitMenuOrAction) {
         const lookup = normalizeOrderLookupInput(rawText);
         if (lookup.isFullId || lookup.isShortDigits) {
-            return await handleRailwayOrderTracking(cleanDigits, lookup.clean, config, sock, quoted);
+            return await handleRailwayOrderTracking(cleanDigits, lookup.clean, config, sock, quoted, replyTarget);
         }
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(replyTarget, {
             text: 'Please send your valid Order ID (e.g. *ORD-2026-9336*) or the 4-digit code (e.g. *9336*), or tap *Contact For Inquiry* below.',
             buttons: buildWelcomeMenuButtons(config),
             messageType: 'bot_track_retry',
@@ -690,14 +716,14 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
 
     if (parsedAction.type === 'track_order_lookup') {
         clearCustomerSessions(stateKey);
-        return await handleRailwayOrderTracking(cleanDigits, parsedAction.query, config, sock, quoted);
+        return await handleRailwayOrderTracking(cleanDigits, parsedAction.query, config, sock, quoted, replyTarget);
     }
 
     const pendingInquiry = inquirySessions.get(stateKey);
     if (pendingInquiry && pendingInquiry.step === 'awaiting_description' && parsedAction.type === 'general_message') {
         const description = String(rawText || '').trim();
         if (description.length < 3) {
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 text: 'Please share a brief description of your inquiry and your name/city so our team can assist you.',
                 messageType: 'inquiry_prompt_retry',
                 quoted,
@@ -710,7 +736,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         const adminDigits = adminNorm.valid ? adminNorm.digits : '923299931199';
 
         const savedInquiry = database.recordInquiry({
-            senderJid,
+            senderJid: replyTarget,
             senderNumber: cleanDigits,
             senderName: senderName || pendingInquiry.senderName || 'WhatsApp Customer',
             description,
@@ -723,7 +749,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             axios.post(
                 `${apiBase}/bridge/inquiry`,
                 {
-                    senderJid,
+                    senderJid: replyTarget,
                     senderNumber: cleanDigits,
                     senderName: senderName || pendingInquiry.senderName || 'WhatsApp Customer',
                     description,
@@ -734,7 +760,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         }
 
         const forwardText = formatAdminInquiryForward({
-            senderJid,
+            senderJid: replyTarget,
             senderNumber: cleanDigits,
             senderName: senderName || pendingInquiry.senderName,
             description,
@@ -747,7 +773,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
             socketOverride: sock
         });
 
-        return await dispatchMessage(cleanDigits, {
+        return await dispatchMessage(replyTarget, {
             title: 'Inquiry Sent to Showroom Desk',
             text: [
                 `✅ Thank you, *${senderName || 'Valued Customer'}*!`,
@@ -784,7 +810,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                     }]
                 }]
                 : [];
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: `${config.storeName} — Categories`,
                 text: `📂 *${config.storeName} — Product Categories*\n\n${catLines.join('\n')}\n\nSelect a category or reply with its code to view products & prices:`,
                 lists,
@@ -802,7 +828,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'category_detail': {
             clearCustomerSessions(stateKey);
             const items = await fetchLiveProducts(config, { category: parsedAction.slug });
-            return await sendProductCardsList(cleanDigits, items, `Category: ${parsedAction.slug}`, config, sock, quoted);
+            return await sendProductCardsList(replyTarget, items, `Category: ${parsedAction.slug}`, config, sock, quoted);
         }
 
         case 'menu_search': {
@@ -812,7 +838,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 senderName,
                 startedAt: Date.now()
             });
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Search Al-Mumtaz Catalog',
                 text: [
                     `🔍 *Search Products — ${config.storeName}*`,
@@ -828,14 +854,14 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'search_query': {
             clearCustomerSessions(stateKey);
             const matches = await fetchLiveProducts(config, { search: parsedAction.query });
-            return await sendProductCardsList(cleanDigits, matches, `Search Results for "${parsedAction.query}"`, config, sock, quoted);
+            return await sendProductCardsList(replyTarget, matches, `Search Results for "${parsedAction.query}"`, config, sock, quoted);
         }
 
         case 'buy_product': {
             clearCustomerSessions(stateKey, 'checkout');
             const product = await fetchLiveProductById(config, parsedAction.productId);
             if (!product) {
-                return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
+                return await sendFiveButtonStoreMenu(replyTarget, senderName, sock, quoted);
             }
             const defaultVariant = product.variants?.[0] || product.variantOptions?.[0]?.name || 'Standard';
             checkoutSessions.set(stateKey, {
@@ -845,7 +871,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 quantity: 1,
                 startedAt: Date.now()
             });
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: `Order: ${product.title}`,
                 text: [
                     `🛒 *Quick COD Order — ${product.title}*`,
@@ -875,7 +901,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 target = await fetchLiveProductById(config, rawTarget);
             }
             const storeUrl = buildStoreBaseUrl(config);
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Pay Online / COD Details',
                 text: formatPaymentOptionsMessage(config, target || { orderId: rawTarget }),
                 buttons: [
@@ -897,7 +923,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'menu_pay': {
             clearCustomerSessions(stateKey);
             const storeUrl = buildStoreBaseUrl(config);
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Online Payment & COD',
                 text: formatPaymentOptionsMessage(config, null),
                 buttons: [
@@ -915,19 +941,19 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'menu_offers': {
             clearCustomerSessions(stateKey);
             const offers = await fetchLiveProducts(config, { flashSale: true, sort: 'discount' });
-            return await sendProductCardsList(cleanDigits, offers, 'Flash Deals & Offered Items', config, sock, quoted);
+            return await sendProductCardsList(replyTarget, offers, 'Flash Deals & Offered Items', config, sock, quoted);
         }
 
         case 'menu_featured': {
             clearCustomerSessions(stateKey);
             const featured = await fetchLiveProducts(config, { featured: true });
-            return await sendProductCardsList(cleanDigits, featured, 'Featured Electronics', config, sock, quoted);
+            return await sendProductCardsList(replyTarget, featured, 'Featured Electronics', config, sock, quoted);
         }
 
         case 'menu_store': {
             clearCustomerSessions(stateKey);
             const storeUrl = buildStoreBaseUrl(config);
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: `${config.storeName} Online Store`,
                 text: `🛍️ *${config.storeName} — Online Storefront*\n\nShop online with Cash on Delivery:\n${storeUrl}\n\n• 100% Genuine Branded Electronics\n• Cash on Delivery (COD) Across Pakistan\n• Instant WhatsApp Order Verification`,
                 buttons: buildWelcomeMenuButtons(config),
@@ -945,7 +971,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 senderName,
                 startedAt: Date.now()
             });
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Track Your COD Order',
                 text: [
                     `📦 *Track Your COD Order — ${config.storeName}*`,
@@ -966,7 +992,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
                 senderName,
                 startedAt: Date.now()
             });
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Contact For Inquiry',
                 text: [
                     `📝 *Contact For Inquiry — ${config.storeName}*`,
@@ -983,7 +1009,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'menu_about': {
             clearCustomerSessions(stateKey);
             const storeUrl = buildStoreBaseUrl(config);
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: `${config.storeName} — Showroom & Timings`,
                 text: formatStoreAboutMessage(config),
                 footer: `Helpline: ${config.storePhone || '03299931199'} • ${config.storeCity}`,
@@ -1001,7 +1027,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'menu_warranty': {
             clearCustomerSessions(stateKey);
             const storeUrl = buildStoreBaseUrl(config);
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Brand Warranty & COD Delivery',
                 text: formatWarrantyDeliveryMessage(config),
                 footer: `${config.storeName} • Nationwide COD`,
@@ -1020,7 +1046,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'menu_solar': {
             clearCustomerSessions(stateKey);
             const storeUrl = buildStoreBaseUrl(config);
-            return await dispatchMessage(cleanDigits, {
+            return await dispatchMessage(replyTarget, {
                 title: 'Solar & Hybrid Inverter Guide',
                 text: formatSolarAdvisorMessage(config),
                 footer: `${config.storeName} • Solar Solutions`,
@@ -1038,7 +1064,7 @@ async function processIncomingMessage({ senderJid, senderName = 'Customer', rawT
         case 'greeting_menu':
         default: {
             clearCustomerSessions(stateKey);
-            return await sendFiveButtonStoreMenu(cleanDigits, senderName, sock, quoted);
+            return await sendFiveButtonStoreMenu(replyTarget, senderName, sock, quoted);
         }
     }
 }
@@ -1059,8 +1085,15 @@ async function handleIncomingBaileysUpsert(sock, chatUpdate) {
             const rawText = extractTextFromBaileysMessage(msg);
             if (!rawText && !catalogPayload) continue;
 
+            const resolvedJid =
+                msg.key.senderPn ||
+                msg.key.remoteJidAlt ||
+                (typeof sock?.resolveJid === 'function' ? sock.resolveJid(jid) : jid) ||
+                jid;
+
             await processIncomingMessage({
-                senderJid: jid,
+                senderJid: resolvedJid,
+                replyJid: jid,
                 senderName: msg.pushName || 'Customer',
                 rawText,
                 catalogPayload,
@@ -1074,6 +1107,7 @@ async function handleIncomingBaileysUpsert(sock, chatUpdate) {
 }
 
 module.exports = {
+    toJid,
     dispatchMessage,
     sendFiveButtonStoreMenu,
     sendOrderConfirmationPrompt,

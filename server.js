@@ -495,10 +495,14 @@ app.patch('/api/orders/:orderId/status', requireApiOrAdminAuth, (req, res) => {
         if (!ALLOWED_ORDER_STATUSES.includes(rawStatus)) {
             return res.status(400).json({ error: 'Invalid order status.' });
         }
+        const prevOrder = database.getOrderById(req.params.orderId);
         const normalized = normalizeOrderStatus(rawStatus);
         const order = database.updateOrderStatus(req.params.orderId, normalized);
         if (!order) {
             return res.status(404).json({ error: 'Order not found.' });
+        }
+        if (req.body?.notifyCustomer !== false && prevOrder?.orderStatus !== order.orderStatus) {
+            whatsappService.sendOrderStatusNotification(order).catch(() => {});
         }
         res.json({ success: true, order });
     } catch (err) {
@@ -570,6 +574,42 @@ app.post('/api/bridge/inquiry', requireApiOrAdminAuth, (req, res) => {
     }
 });
 
+// ── REMOTE WHATSAPP AUTH BACKUP BRIDGE (Zero-Volume Railway Support) ─────────
+app.get('/api/bridge/wa-auth', requireApiOrAdminAuth, (req, res) => {
+    res.json({ sessionIds: database.listWaAuthBackupIds() });
+});
+
+app.get('/api/bridge/wa-auth/:sessionId', requireApiOrAdminAuth, (req, res) => {
+    const backup = database.getWaAuthBackup(req.params.sessionId);
+    if (!backup) {
+        return res.status(404).json({ error: 'No backed-up WhatsApp session found.' });
+    }
+    res.json({ success: true, backup });
+});
+
+app.post('/api/bridge/wa-auth/:sessionId', requireApiOrAdminAuth, (req, res) => {
+    try {
+        const { credsJson = '', keysJson = '', sessionToken = '' } = req.body || {};
+        const saved = database.upsertWaAuthBackup(req.params.sessionId, { credsJson, keysJson, sessionToken });
+        if (!saved) {
+            return res.status(400).json({ error: 'credsJson is required for initial WhatsApp auth backup.' });
+        }
+        res.json({ success: true, sessionId: saved.sessionId, updatedAt: saved.updatedAt });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+app.delete('/api/bridge/wa-auth/:sessionId', requireApiOrAdminAuth, (req, res) => {
+    database.deleteWaAuthBackup(req.params.sessionId);
+    res.json({ success: true });
+});
+
+app.delete('/api/bridge/wa-auth', requireApiOrAdminAuth, (req, res) => {
+    database.clearAllWaAuthBackups();
+    res.json({ success: true });
+});
+
 // ── ADMIN AUTHENTICATION ENDPOINTS ───────────────────────────────────────────
 app.get('/api/admin/session', (req, res) => {
     const token = extractAdminToken(req);
@@ -625,21 +665,26 @@ app.get('/api/admin/overview', requireAdminAuth, async (req, res) => {
     const uploadedImages = await mediaStore.listImages(50);
     const remoteWa = await fetchRailwayWhatsAppStatus();
 
+    const localConnected = sessionManager.getConnectedSessions();
+    const localActive = sessionManager.getActiveSessions();
+    const mergedConnected = Array.from(new Set([...(remoteWa?.connectedSessions || []), ...localConnected]));
+    const mergedAll = Array.from(new Set([...(remoteWa?.allSessions || []), ...localActive]));
+
     const whatsappStatus = remoteWa
         ? {
-            source: 'railway',
+            source: remoteWa.railwayReachable ? 'railway' : 'local_fallback',
             railwayUrl: remoteWa.railwayUrl,
             railwayReachable: remoteWa.railwayReachable,
             railwayError: remoteWa.error || null,
-            connectedSessions: remoteWa.connectedSessions,
-            allSessions: remoteWa.allSessions
+            connectedSessions: mergedConnected,
+            allSessions: mergedAll
         }
         : {
             source: 'local',
             railwayUrl: '',
             railwayReachable: false,
-            connectedSessions: sessionManager.getConnectedSessions(),
-            allSessions: sessionManager.getActiveSessions()
+            connectedSessions: localConnected,
+            allSessions: localActive
         };
 
     res.json({
@@ -745,9 +790,13 @@ app.patch('/api/admin/orders/:orderId/status', requireAdminAuth, (req, res) => {
         if (!ALLOWED_ORDER_STATUSES.includes(status)) {
             return res.status(400).json({ error: 'Invalid order status.' });
         }
+        const prevOrder = database.getOrderById(req.params.orderId);
         const normalized = normalizeOrderStatus(status);
         const order = database.updateOrderStatus(req.params.orderId, normalized);
         if (!order) return res.status(404).json({ error: 'Order not found.' });
+        if (req.body?.notifyCustomer !== false && prevOrder?.orderStatus !== order.orderStatus) {
+            whatsappService.sendOrderStatusNotification(order).catch(() => {});
+        }
         res.json({ success: true, order });
     } catch (err) {
         res.status(400).json({ error: err.message });
@@ -851,16 +900,21 @@ app.get('/api/admin/whatsapp-logs', requireAdminAuth, (req, res) => {
 app.get('/api/whatsapp/status', requireAdminAuth, async (req, res) => {
     const { config } = database.getAllVariables();
     const remoteWa = await fetchRailwayWhatsAppStatus();
+    const localConnected = sessionManager.getConnectedSessions();
+    const localActive = sessionManager.getActiveSessions();
 
     if (remoteWa) {
+        const mergedConnected = Array.from(new Set([...(remoteWa.connectedSessions || []), ...localConnected]));
+        const mergedAll = Array.from(new Set([...(remoteWa.allSessions || []), ...localActive]));
         return res.json({
-            source: 'railway',
+            source: remoteWa.railwayReachable ? 'railway' : 'local_fallback',
             railwayUrl: remoteWa.railwayUrl,
             railwayReachable: remoteWa.railwayReachable,
             railwayError: remoteWa.error || null,
             adminWhatsappNumber: config.adminWhatsappNumber,
-            connectedSessions: remoteWa.connectedSessions,
-            allSessions: remoteWa.allSessions
+            connectedSessions: mergedConnected,
+            allSessions: mergedAll,
+            diagnostics: getVolumeDiagnostics()
         });
     }
 
@@ -869,8 +923,8 @@ app.get('/api/whatsapp/status', requireAdminAuth, async (req, res) => {
         railwayUrl: '',
         railwayReachable: false,
         adminWhatsappNumber: config.adminWhatsappNumber,
-        connectedSessions: sessionManager.getConnectedSessions(),
-        allSessions: sessionManager.getActiveSessions(),
+        connectedSessions: localConnected,
+        allSessions: localActive,
         diagnostics: getVolumeDiagnostics()
     });
 });
@@ -881,8 +935,16 @@ app.post('/api/pair', requireAdminAuth, async (req, res) => {
         const { railwayUrl, headers } = getRailwayBridgeConfig();
 
         if (railwayUrl) {
-            const bridge = await axios.post(`${railwayUrl}/api/pair`, { phoneNumber }, { headers, timeout: 30000 });
-            return res.json(bridge.data);
+            try {
+                const bridge = await axios.post(`${railwayUrl}/api/pair`, { phoneNumber }, { headers, timeout: 30000 });
+                return res.json(bridge.data);
+            } catch (bridgeErr) {
+                const status = bridgeErr.response?.status;
+                if (status === 400 && bridgeErr.response?.data?.error) {
+                    return res.status(400).json({ error: bridgeErr.response.data.error });
+                }
+                console.warn(`[pair] Railway bridge (${railwayUrl}) unreachable (${bridgeErr.message}), falling back to local Baileys pairing.`);
+            }
         }
 
         const result = await sessionManager.generatePairingCode(phoneNumber);
@@ -899,11 +961,13 @@ app.delete('/api/whatsapp/session/:number', requireAdminAuth, async (req, res) =
     try {
         const { railwayUrl, headers } = getRailwayBridgeConfig();
         if (railwayUrl) {
-            const bridge = await axios.delete(
-                `${railwayUrl}/api/whatsapp/session/${encodeURIComponent(req.params.number)}`,
-                { headers, timeout: 15000 }
-            );
-            return res.json(bridge.data);
+            try {
+                const bridge = await axios.delete(
+                    `${railwayUrl}/api/whatsapp/session/${encodeURIComponent(req.params.number)}`,
+                    { headers, timeout: 15000 }
+                );
+                return res.json(bridge.data);
+            } catch (_) {}
         }
         const result = await sessionManager.deleteSessionByNumber(req.params.number);
         res.json(result);
@@ -916,8 +980,10 @@ app.post('/api/whatsapp/sessions/clear', requireAdminAuth, async (req, res) => {
     try {
         const { railwayUrl, headers } = getRailwayBridgeConfig();
         if (railwayUrl) {
-            const bridge = await axios.post(`${railwayUrl}/api/whatsapp/sessions/clear`, {}, { headers, timeout: 15000 });
-            return res.json(bridge.data);
+            try {
+                const bridge = await axios.post(`${railwayUrl}/api/whatsapp/sessions/clear`, {}, { headers, timeout: 15000 });
+                return res.json(bridge.data);
+            } catch (_) {}
         }
         const result = await sessionManager.clearAllSessions();
         res.json(result);

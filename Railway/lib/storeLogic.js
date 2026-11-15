@@ -102,9 +102,9 @@ function buildStoreBaseUrl(storeConfig = {}) {
         storeConfig.storeUrl ||
         storeConfig.storePublicUrl ||
         storeConfig.mainSiteUrl ||
-        'https://al-mumtaz.ai.studio'
+        'https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app'
     ).trim().replace(/\/+$/, '');
-    return raw || 'https://al-mumtaz.ai.studio';
+    return raw || 'https://ais-pre-hiuyw6voetxjeqvop7f4jn-955644874863.asia-east1.run.app';
 }
 
 function buildSiteApiUrl(storeConfig = {}) {
@@ -115,6 +115,21 @@ function buildSiteApiUrl(storeConfig = {}) {
     const base = String(storeConfig.mainSiteUrl || storeConfig.storeUrl || storeConfig.storePublicUrl || '').trim().replace(/\/+$/, '');
     if (!base) return '';
     return /\/api$/i.test(base) ? base : `${base}/api`;
+}
+
+function formatSiteDetailsSummary(storeConfig = {}) {
+    const storeCity = storeConfig.storeCity || 'Hasilpur';
+    const address = storeConfig.storeAddress || 'Main Railway Road, Hasilpur, District Bahawalpur';
+    const phone = storeConfig.storePhone || '03299931199';
+    const storeUrl = buildStoreBaseUrl(storeConfig);
+
+    return [
+        `🌐 *Website:* ${storeUrl}`,
+        `📍 *Showroom:* ${address} (${storeCity})`,
+        `📞 *Phone / WhatsApp:* ${phone}`,
+        `🕒 *Hours:* Mon–Sat 10:00 AM – 9:30 PM`,
+        `🛡️ *Service:* Genuine Brand Warranty · Nationwide COD`
+    ].join('\n');
 }
 
 function formatStoreAboutMessage(storeConfig = {}) {
@@ -237,7 +252,8 @@ function formatOrderReceiptText(order, storeConfig = {}) {
         `COD Delivery: ${order.codDeliveryCharges === 0 ? 'FREE' : formatPkr(order.codDeliveryCharges)}`,
         `*Grand Total (COD): ${formatPkr(order.grandTotal)}*`,
         '',
-        'Please tap a button below to confirm or cancel your Cash on Delivery order:'
+        'Please tap a button below (or reply *CONFIRM* / *REJECT*) to verify your Cash on Delivery order:',
+        `Helpline: ${storeConfig.storePhone || '03299931199'} · Web: ${buildStoreBaseUrl(storeConfig)}`
     ].filter((l) => l !== null);
 
     return lines.join('\n');
@@ -246,6 +262,8 @@ function formatOrderReceiptText(order, storeConfig = {}) {
 function formatOrderConfirmationThanksAndShopPrompt(order, storeConfig = {}) {
     const storeName = storeConfig.storeName || 'Al-Mumtaz Electronics';
     const storeCity = storeConfig.storeCity || 'Hasilpur';
+    const phone = storeConfig.storePhone || '03299931199';
+    const address = storeConfig.storeAddress || 'Main Railway Road, Hasilpur, District Bahawalpur';
     const storeUrl = buildStoreBaseUrl(storeConfig);
     const shortCode = String(order.orderId || '').split('-').pop() || order.orderId;
     const itemCount = Array.isArray(order.items)
@@ -254,17 +272,40 @@ function formatOrderConfirmationThanksAndShopPrompt(order, storeConfig = {}) {
 
     return [
         `✅ *Thank You, ${order.customerName || 'Valued Customer'}!*`,
-        `Your order *#${order.orderId}* is now *CONFIRMED* at *${storeName}* (${storeCity}).`,
+        `Your order *#${order.orderId}* has been *ACCEPTED & CONFIRMED* at *${storeName}* (${storeCity}).`,
         '',
         `• Items: ${itemCount || 1} | *COD Total: ${formatPkr(order.grandTotal)}*`,
         `• Delivery City: ${order.city || storeCity}`,
         `• Track anytime by sending *${order.orderId}* or *${shortCode}*`,
         `• Live Tracking Link: ${storeUrl}/track/${order.orderId}`,
         '',
-        'Your order is being packed and will be dispatched shortly.',
+        'We appreciate your trust in us! Your parcel is being prepared for fast COD dispatch.',
+        `📞 Helpline: ${phone} · 📍 ${address}`,
         '',
         '🛍️ *Would you like to start shopping on WhatsApp?*',
         'Tap any button below to browse categories, search items, pay online, or track orders:'
+    ].join('\n');
+}
+
+function formatOrderRejectionApologyMessage(order, storeConfig = {}) {
+    const storeName = storeConfig.storeName || 'Al-Mumtaz Electronics';
+    const storeCity = storeConfig.storeCity || 'Hasilpur';
+    const phone = storeConfig.storePhone || '03299931199';
+    const address = storeConfig.storeAddress || 'Main Railway Road, Hasilpur, District Bahawalpur';
+    const storeUrl = buildStoreBaseUrl(storeConfig);
+    const orderLabel = order?.orderId ? `*#${order.orderId}*` : 'your order';
+
+    return [
+        `🙏 *We Sincerely Apologize, ${order?.customerName || 'Valued Customer'}*`,
+        `Your order ${orderLabel} at *${storeName}* (${storeCity}) has been *CANCELLED / REJECTED*.`,
+        '',
+        '• We are truly sorry for any inconvenience caused.',
+        '• No Cash on Delivery (COD) charges will be collected.',
+        `• Need assistance or want to reorder another model? Contact our showroom team or browse our live catalog anytime:`,
+        '',
+        `🌐 *Store:* ${storeUrl}`,
+        `📞 *Helpline / WhatsApp:* ${phone}`,
+        `📍 *Showroom:* ${address}`
     ].join('\n');
 }
 
@@ -389,22 +430,23 @@ function parseIncomingBotAction(rawInput) {
     const lower = text.toLowerCase();
 
     const confirmMatch = text.match(/^confirm_order_([A-Za-z0-9_-]+)$/i) ||
-        upper.match(/^CONFIRM\s+#?(ORD-[\w-]+)$/i);
+        text.match(/^accept_order_([A-Za-z0-9_-]+)$/i) ||
+        upper.match(/^(?:CONFIRM|ACCEPT)\s+#?(ORD-[\w-]+)$/i);
     if (confirmMatch) {
         return { type: 'order_decision', decision: 'Confirmed', orderId: confirmMatch[1].toUpperCase() };
     }
 
     const cancelMatch = text.match(/^cancel_order_([A-Za-z0-9_-]+)$/i) ||
         text.match(/^reject_order_([A-Za-z0-9_-]+)$/i) ||
-        upper.match(/^(?:CANCEL|REJECT|DENY)\s+#?(ORD-[\w-]+)$/i);
+        upper.match(/^(?:CANCEL|REJECT|DENY|DECLINE)\s+#?(ORD-[\w-]+)$/i);
     if (cancelMatch) {
         return { type: 'order_decision', decision: 'Cancelled', orderId: cancelMatch[1].toUpperCase() };
     }
 
-    if (text === '✅ Confirm Order' || upper === 'CONFIRM ORDER' || upper === 'CONFIRM') {
+    if (text === '✅ Confirm Order' || upper === 'CONFIRM ORDER' || upper === 'CONFIRM' || upper === 'ACCEPT' || upper === 'ACCEPT ORDER' || upper === 'YES CONFIRM') {
         return { type: 'order_decision_latest', decision: 'Confirmed' };
     }
-    if (text === '❌ Cancel Order' || upper === 'CANCEL ORDER' || upper === 'REJECT ORDER' || upper === 'REJECT' || upper === 'CANCEL') {
+    if (text === '❌ Cancel Order' || upper === 'CANCEL ORDER' || upper === 'REJECT ORDER' || upper === 'REJECT' || upper === 'CANCEL' || upper === 'DECLINE' || upper === 'NO CANCEL') {
         return { type: 'order_decision_latest', decision: 'Cancelled' };
     }
 
@@ -460,7 +502,15 @@ function parseIncomingBotAction(rawInput) {
     if (lower === 'almumtaz_inquiry' || lower === '📝 contact for inquiry' || lower === 'contact for inquiry' || lower === 'inquiry' || text === '6') {
         return { type: 'menu_inquiry' };
     }
-    if (lower === 'menu_about' || lower === '🏪 showroom & timings' || lower === 'showroom & timings' || lower === 'about' || lower === 'location' || lower === 'address' || lower === 'timings' || lower === 'hours' || lower === 'showroom' || text === '7') {
+    if (
+        lower === 'menu_about' || lower === '🏪 showroom & timings' || lower === 'showroom & timings' ||
+        lower === 'about' || lower === 'location' || lower === 'address' || lower === 'timings' ||
+        lower === 'hours' || lower === 'showroom' || lower === 'details' || lower === 'site' ||
+        lower === 'website' || lower === 'info' || lower === 'contact' || lower === 'number' ||
+        lower === 'phone' || lower === 'helpline' || lower === 'store details' || lower === 'site details' ||
+        /\b(?:address|location|timing|hours|helpline|website|site\s*details|store\s*details|contact\s*number|where\s*is\s*(?:your\s*)?(?:shop|store|showroom))\b/i.test(lower) ||
+        text === '7'
+    ) {
         return { type: 'menu_about' };
     }
     if (lower === 'menu_warranty' || lower === '🛡️ warranty & delivery' || lower === 'warranty & delivery' || lower === 'warranty' || lower === 'delivery' || lower === 'shipping' || lower === 'rates' || text === '8') {
@@ -530,12 +580,14 @@ module.exports = {
     formatPkr,
     buildStoreBaseUrl,
     buildSiteApiUrl,
+    formatSiteDetailsSummary,
     formatStoreAboutMessage,
     formatWarrantyDeliveryMessage,
     formatSolarAdvisorMessage,
     buildWelcomeStoreMenuLists,
     formatOrderReceiptText,
     formatOrderConfirmationThanksAndShopPrompt,
+    formatOrderRejectionApologyMessage,
     formatOrderTrackingMessage,
     formatProductWhatsAppCard,
     formatPaymentOptionsMessage,
